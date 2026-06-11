@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// Пользователь (изначально только владелец, потом — родственники)
+model User {
+  id              Int       @id @default(autoincrement())
+  telegramId      BigInt    @unique
+  firstName       String?
+  lastName        String?
+  timezone        String    @default("Asia/Yekaterinburg")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  googleAccessToken  String?
+  googleRefreshToken String?
+  googleTokenExpiry  DateTime?
+
+  scheduleEvents  ScheduleEvent[]
+  plans           Plan[]
+  dietEntries     DietEntry[]
+  nutritionProfile NutritionProfile?
+}
+
+/// Событие в расписании (жесткая привязка ко времени, хранится в UTC)
+model ScheduleEvent {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  title       String
+  description String?
+  startTimeUTC DateTime
+  endTimeUTC   DateTime
+  createdInTz  String   @default("Asia/Yekaterinburg")
+  reminded150  Boolean  @default(false)
+  reminded60   Boolean  @default(false)
+  googleEventId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// План (To-Do задача без строгого времени, привязана к дате)
+model Plan {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  title         String
+  description   String?
+  date          String
+  completed     Boolean  @default(false)
+  completedAt   DateTime?
+  originalDate  String
+  groupId       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Запись о приеме пищи (рацион)
+model DietEntry {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  name        String
+  mealType    String   @default("snack")
+  date        String
+  calories    Float    @default(0)
+  protein     Float    @default(0)
+  fat         Float    @default(0)
+  carbs       Float    @default(0)
+  portionGrams Float?
+  photoFileId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Профиль КБЖУ (суточная норма пользователя)
+model NutritionProfile {
+  id              Int    @id @default(autoincrement())
+  userId          Int    @unique
+  height          Float
+  weight          Float
+  age             Int
+  gender          String
+  activityLevel   String
+  goal            String @default("maintain")
+  dailyCalories   Float  @default(0)
+  dailyProtein    Float  @default(0)
+  dailyFat        Float  @default(0)
+  dailyCarbs      Float  @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

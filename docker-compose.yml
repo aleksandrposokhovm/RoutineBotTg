@@ -1,0 +1,14 @@
+services:
+  routinebot:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: routinebot
+    restart: always
+    ports:
+      - "3001:3001"
+    volumes:
+      # Монтируем папку prisma для сохранения базы данных SQLite (dev.db) на хосте
+      - ./backend/prisma:/app/backend/prisma
+    env_file:
+      - ./backend/.env

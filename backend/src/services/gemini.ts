@@ -33,9 +33,12 @@ function initOrRefreshClients() {
     console.log(
       `[Gemini Rotation] Found ${apiKeys.length} API key(s) in .env. Initializing/updating clients...`,
     );
-    clients = apiKeys.map((key) => new GoogleGenAI({ apiKey: key }));
+    const httpOptions = process.env.GEMINI_BASE_URL
+      ? { baseUrl: process.env.GEMINI_BASE_URL }
+      : undefined;
+    clients = apiKeys.map((key) => new GoogleGenAI({ apiKey: key, httpOptions }));
     if (clients.length === 0) {
-      clients = [new GoogleGenAI({ apiKey: "" })];
+      clients = [new GoogleGenAI({ apiKey: "", httpOptions })];
     }
     currentKeysStr = apiKeysStr;
     activeKeyIndex = 0;

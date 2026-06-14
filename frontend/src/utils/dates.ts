@@ -11,14 +11,17 @@ const MONTHS_RU_GENITIVE = [
 const WEEKDAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
 export function getMonthName(month: number): string {
+  // eslint-disable-next-line security/detect-object-injection
   return MONTHS_RU[month];
 }
 
 export function getMonthNameGenitive(month: number): string {
+  // eslint-disable-next-line security/detect-object-injection
   return MONTHS_RU_GENITIVE[month];
 }
 
 export function getWeekdayShort(dayIndex: number): string {
+  // eslint-disable-next-line security/detect-object-injection
   return WEEKDAYS_SHORT[dayIndex];
 }
 

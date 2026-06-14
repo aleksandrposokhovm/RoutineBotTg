@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import crypto from 'crypto';
 import prisma from '../db';
+import { Prisma } from '../generated/prisma/client';
 
 const secret = process.env.BOT_TOKEN || 'fallback_secret';
 
@@ -52,7 +53,7 @@ export async function handleGoogleCallback(code: string, state: string): Promise
     const { tokens } = await oauth2Client.getToken(code);
 
     const expiryDate = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
-    const updateData: any = {
+    const updateData: Prisma.UserUpdateInput = {
       googleAccessToken: tokens.access_token,
       googleTokenExpiry: expiryDate
     };
@@ -97,7 +98,7 @@ export async function getGoogleCalendarClient(user: {
 
   oauth2Client.on('tokens', async (tokens) => {
     console.log(`[Google Calendar] Refreshed tokens for user ID ${user.id}`);
-    const updateData: any = {};
+    const updateData: Prisma.UserUpdateInput = {};
     if (tokens.access_token) {
       updateData.googleAccessToken = tokens.access_token;
     }
@@ -122,16 +123,18 @@ export async function getGoogleCalendarClient(user: {
 /**
  * Обработчик ошибок API Google: при невалидном или отозванном токене сбрасывает связь в БД.
  */
-async function handleGoogleApiError(userId: number, error: any) {
-  console.error(`[Google Calendar Error] User ID ${userId}:`, error);
-  const errMsg = String(error?.message || '').toLowerCase();
+async function handleGoogleApiError(userId: number, error: unknown) {
+  console.error('[Google Calendar Error] User ID %d:', userId, error);
+  const err = error as Record<string, unknown> | null | undefined;
+  const errMsg = String(err?.message || '').toLowerCase();
+  const status = err?.status;
   
   // Признаки того, что токен больше не валиден (отозван, удален, истек без возможности обновления)
   if (
     errMsg.includes('invalid_grant') ||
     errMsg.includes('invalid credentials') ||
-    error?.status === 401 ||
-    error?.status === 400
+    status === 401 ||
+    status === 400
   ) {
     console.log(`[Google Calendar] Revoking Google connection for user ID ${userId} due to auth failure.`);
     try {

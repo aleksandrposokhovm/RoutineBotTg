@@ -23,9 +23,10 @@ export function EditScheduleView({ event, onClose, onSave, onDelete }: EditSched
     setSaving(true);
     try {
       await onSave({ title, startTime, endTime, description: description || null, date: event.date });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error saving event:', err);
-      alert('Не удалось сохранить событие: ' + (err.message || String(err)));
+      const errMsg = err instanceof Error ? err.message : String(err);
+      alert('Не удалось сохранить событие: ' + errMsg);
     } finally {
       setSaving(false);
     }
@@ -35,9 +36,10 @@ export function EditScheduleView({ event, onClose, onSave, onDelete }: EditSched
     if (confirm('Точно удалить это событие?')) {
       try {
         await onDelete();
-      } catch (err: any) {
+      } catch (err) {
         console.error('Error deleting event:', err);
-        alert('Не удалось удалить событие: ' + (err.message || String(err)));
+        const errMsg = err instanceof Error ? err.message : String(err);
+        alert('Не удалось удалить событие: ' + errMsg);
       }
     }
   };

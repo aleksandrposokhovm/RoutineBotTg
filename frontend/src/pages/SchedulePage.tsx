@@ -51,7 +51,13 @@ export function SchedulePage() {
   const handleConnectCalendar = async () => {
     try {
       const { url } = await googleAuthApi.getAuthUrl();
-      const tg = (window as any).Telegram?.WebApp;
+      const tg = (window as unknown as {
+        Telegram?: {
+          WebApp?: {
+            openLink?: (url: string) => void;
+          };
+        };
+      }).Telegram?.WebApp;
       if (tg && tg.openLink) {
         tg.openLink(url);
       } else {
@@ -162,18 +168,9 @@ export function SchedulePage() {
   }
 
   const handleCreateEvent = (defaultHour?: number) => {
-    let startTime = '09:00';
-    let endTime = '10:00';
-
-    if (defaultHour !== undefined) {
-      startTime = `${String(defaultHour).padStart(2, '0')}:00`;
-      endTime = `${String((defaultHour + 1) % 24).padStart(2, '0')}:00`;
-    } else {
-      const now = new Date();
-      const currentHour = now.getHours();
-      startTime = `${String(currentHour).padStart(2, '0')}:00`;
-      endTime = `${String((currentHour + 1) % 24).padStart(2, '0')}:00`;
-    }
+    const currentHour = defaultHour !== undefined ? defaultHour : new Date().getHours();
+    const startTime = `${String(currentHour).padStart(2, '0')}:00`;
+    const endTime = `${String((currentHour + 1) % 24).padStart(2, '0')}:00`;
 
     setEditingEvent({
       id: 0,

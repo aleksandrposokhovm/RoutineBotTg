@@ -25,7 +25,7 @@ async function main() {
   console.log(`👤 User created/upserted: ${user.firstName} ${user.lastName}`);
 
   // 2. Create nutrition profile
-  const nutritionProfile = await prisma.nutritionProfile.upsert({
+  await prisma.nutritionProfile.upsert({
     where: { userId: user.id },
     update: {},
     create: {

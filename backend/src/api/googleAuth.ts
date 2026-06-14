@@ -97,7 +97,7 @@ publicGoogleAuthRouter.get('/callback', async (req: Request, res: Response) => {
       </body>
       </html>
     `);
-  } catch (error: any) {
+  } catch (error) {
     console.error('[Google Callback API Error]:', error);
     res.status(500).send(`
       <!DOCTYPE html>
@@ -109,7 +109,7 @@ publicGoogleAuthRouter.get('/callback', async (req: Request, res: Response) => {
       <body style="background-color: #121214; color: #ff5252; font-family: sans-serif; text-align: center; padding: 50px;">
         <h1>Ошибка авторизации</h1>
         <p>Не удалось подключить Google Календарь. Возможно, ссылка авторизации устарела или недействительна.</p>
-        <p style="color: #888;">${error.message || ''}</p>
+        <p style="color: #888;">${error instanceof Error ? error.message : String(error)}</p>
       </body>
       </html>
     `);
@@ -119,7 +119,7 @@ publicGoogleAuthRouter.get('/callback', async (req: Request, res: Response) => {
 // GET /api/google/auth-url (Защищен TMA)
 protectedGoogleAuthRouter.get('/auth-url', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const url = getGoogleAuthUrl(userId);
     res.json({ url });
   } catch (error) {
@@ -131,7 +131,7 @@ protectedGoogleAuthRouter.get('/auth-url', async (req: Request, res: Response) =
 // POST /api/google/disconnect (Защищен TMA)
 protectedGoogleAuthRouter.post('/disconnect', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     await prisma.user.update({
       where: { id: userId },
       data: {

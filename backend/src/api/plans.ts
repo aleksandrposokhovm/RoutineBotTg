@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db';
+import { Plan, Prisma } from '../generated/prisma/client';
 
 const router = Router();
 
@@ -9,8 +10,8 @@ const router = Router();
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { date, includeCompleted } = req.query;
-    const userId = (req as any).user.id;
+    const { date } = req.query;
+    const userId = req.user!.id;
 
     const plans = await prisma.plan.findMany({
       where: {
@@ -43,14 +44,14 @@ router.get('/', async (req: Request, res: Response) => {
       }
     }
 
-    const uniquePlans = Array.from(uniquePlansMap.values()).sort((a: any, b: any) => {
+    const uniquePlans = Array.from(uniquePlansMap.values()).sort((a: Plan, b: Plan) => {
       if (a.completed === b.completed) {
         return a.createdAt.getTime() - b.createdAt.getTime();
       }
       return a.completed ? 1 : -1;
     });
 
-    const result = uniquePlans.map((p: any) => ({
+    const result = uniquePlans.map((p: Plan) => ({
       id: p.id,
       title: p.title,
       description: p.description,
@@ -75,7 +76,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const { title, description, date } = req.body;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
     const plan = await prisma.plan.create({
       data: {
@@ -101,7 +102,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id/complete', async (req: Request, res: Response) => {
   try {
     const { date } = req.body;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const existing = await prisma.plan.findFirst({ where: { id: Number(req.params.id), userId } });
     if (!existing) return res.status(404).json({ error: 'Plan not found or access denied' });
 
@@ -125,7 +126,7 @@ router.put('/:id/complete', async (req: Request, res: Response) => {
       }
       plan = await prisma.plan.findFirst({ where: { id: Number(req.params.id) } });
     } else {
-      const updateData: any = {
+      const updateData: Prisma.PlanUpdateInput = {
         completed: true,
         completedAt: new Date()
       };
@@ -150,7 +151,7 @@ router.put('/:id/complete', async (req: Request, res: Response) => {
  */
 router.put('/:id/uncomplete', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const existing = await prisma.plan.findFirst({ where: { id: Number(req.params.id), userId } });
     if (!existing) return res.status(404).json({ error: 'Plan not found or access denied' });
 
@@ -187,12 +188,12 @@ router.put('/:id/uncomplete', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { title, description, date } = req.body;
-    const updateData: any = {};
+    const updateData: Prisma.PlanUpdateInput = {};
     if (title) updateData.title = title;
     if (description !== undefined) updateData.description = description;
     if (date) updateData.date = date;
 
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const existing = await prisma.plan.findFirst({ where: { id: Number(req.params.id), userId } });
     if (!existing) return res.status(404).json({ error: 'Plan not found or access denied' });
 
@@ -212,7 +213,7 @@ router.put('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const existing = await prisma.plan.findFirst({ where: { id: Number(req.params.id), userId } });
     if (!existing) return res.status(404).json({ error: 'Plan not found or access denied' });
 

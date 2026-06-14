@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { DietEntryItem } from '../api';
+import { type DietEntryItem, API_BASE } from '../api';
 
 interface EditDietViewProps {
   entry: DietEntryItem;
@@ -81,9 +81,10 @@ export function EditDietView({ entry, onClose, onSave, onDelete }: EditDietViewP
         portionGrams: portionGrams ? parseFloat(portionGrams) : null,
         photoData: photoData || undefined,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error saving diet entry:', err);
-      alert('Не удалось сохранить блюдо: ' + (err.message || String(err)));
+      const errMsg = err instanceof Error ? err.message : String(err);
+      alert('Не удалось сохранить блюдо: ' + errMsg);
     } finally {
       setSaving(false);
     }
@@ -93,9 +94,10 @@ export function EditDietView({ entry, onClose, onSave, onDelete }: EditDietViewP
     if (confirm('Точно удалить эту запись о питании?')) {
       try {
         await onDelete();
-      } catch (err: any) {
+      } catch (err) {
         console.error('Error deleting diet entry:', err);
-        alert('Не удалось удалить запись: ' + (err.message || String(err)));
+        const errMsg = err instanceof Error ? err.message : String(err);
+        alert('Не удалось удалить запись: ' + errMsg);
       }
     }
   };
@@ -141,7 +143,7 @@ export function EditDietView({ entry, onClose, onSave, onDelete }: EditDietViewP
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {(photoPreview || entry.photoFileId) ? (
               <img 
-                src={photoPreview || `/api/diet/photo/${entry.photoFileId}`} 
+                src={photoPreview || `${API_BASE}/diet/photo/${entry.photoFileId}`} 
                 alt="Превью" 
                 style={{ width: '80px', height: '80px', borderRadius: '8px', objectFit: 'cover', border: '1px solid var(--border-color)' }}
               />

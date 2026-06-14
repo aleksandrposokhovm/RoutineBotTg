@@ -10,7 +10,7 @@ const router = Router();
  */
 router.get('/me', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: { nutritionProfile: true }
@@ -39,7 +39,7 @@ router.get('/me', async (req: Request, res: Response) => {
  */
 router.put('/me/timezone', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const { timezone } = req.body;
 
     try {
@@ -66,7 +66,7 @@ router.put('/me/timezone', async (req: Request, res: Response) => {
  */
 router.post('/me/nutrition', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const { height, weight, age, gender, activityLevel, goal } = req.body;
 
     // Расчет через Gemini

@@ -21,9 +21,10 @@ export function EditPlanView({ plan, onClose, onSave, onDelete }: EditPlanViewPr
     setSaving(true);
     try {
       await onSave({ title, description: description || null });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error saving plan:', err);
-      alert('Не удалось сохранить задачу: ' + (err.message || String(err)));
+      const errMsg = err instanceof Error ? err.message : String(err);
+      alert('Не удалось сохранить задачу: ' + errMsg);
     } finally {
       setSaving(false);
     }
@@ -33,9 +34,10 @@ export function EditPlanView({ plan, onClose, onSave, onDelete }: EditPlanViewPr
     if (confirm('Точно удалить эту задачу?')) {
       try {
         await onDelete();
-      } catch (err: any) {
+      } catch (err) {
         console.error('Error deleting plan:', err);
-        alert('Не удалось удалить задачу: ' + (err.message || String(err)));
+        const errMsg = err instanceof Error ? err.message : String(err);
+        alert('Не удалось удалить задачу: ' + errMsg);
       }
     }
   };

@@ -14,7 +14,7 @@
 import { Telegraf } from 'telegraf';
 import crypto from 'crypto';
 import prisma from '../db';
-import { getTodayDateInTz, getCurrentHourInTz, utcToLocalTime, addDaysToDateStr } from './timezone';
+import { getTodayDateInTz, utcToLocalTime, addDaysToDateStr } from './timezone';
 
 let reminderInterval: ReturnType<typeof setInterval> | null = null;
 const sentReminders = new Set<string>();
@@ -26,7 +26,7 @@ async function sendMessage(bot: Telegraf, telegramId: bigint, text: string) {
   try {
     await bot.telegram.sendMessage(telegramId.toString(), text, { parse_mode: 'Markdown' });
   } catch (error) {
-    console.error(`Failed to send message to ${telegramId}:`, error);
+    console.error('Failed to send message to %s:', telegramId, error);
   }
 }
 

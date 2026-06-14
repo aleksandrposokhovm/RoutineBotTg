@@ -25,7 +25,7 @@ export async function validateTelegramWebApp(req: Request, res: Response, next: 
       const devUser = await prisma.user.findFirst();
       if (devUser) {
         console.log(`[API AUTH] Dev bypass active. Using user id: ${devUser.id}, telegramId: ${devUser.telegramId}`);
-        (req as any).user = devUser;
+        req.user = devUser;
         return next();
       } else {
         console.log('[API AUTH] Dev bypass failed: No users in database.');
@@ -51,12 +51,14 @@ export async function validateTelegramWebApp(req: Request, res: Response, next: 
     .sort()
     .join('\n');
 
+  // nosemgrep: javascript.lang.security.audit.hardcoded-hmac-key.hardcoded-hmac-key
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(process.env.BOT_TOKEN || '').digest();
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
-  console.log(`[API AUTH] Comparing hashes. Provided: ${hash.substring(0, 8)}..., Calculated: ${calculatedHash.substring(0, 8)}...`);
+  const calculatedBuffer = Buffer.from(calculatedHash, 'utf8');
+  const hashBuffer = Buffer.from(hash, 'utf8');
 
-  if (calculatedHash !== hash) {
+  if (calculatedBuffer.length !== hashBuffer.length || !crypto.timingSafeEqual(calculatedBuffer, hashBuffer)) {
     console.log('[API AUTH] Validation failed: Hash mismatch!');
     return res.status(401).json({ error: 'Unauthorized: Invalid hash' });
   }
@@ -93,7 +95,7 @@ export async function validateTelegramWebApp(req: Request, res: Response, next: 
     }
 
     console.log(`[API AUTH] Authentication successful. User: ${dbUser.firstName} (id: ${dbUser.id})`);
-    (req as any).user = dbUser;
+    req.user = dbUser;
     next();
   } catch (err) {
     console.error('[API AUTH] Error parsing TG user:', err);

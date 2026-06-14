@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import scheduleRoutes from './schedule';
@@ -40,6 +39,7 @@ export function createApp() {
 
   // Автоматическая раздача статических файлов фронтенда в продакшене
   const staticPath = process.env.STATIC_FILES_PATH || path.resolve(__dirname, '../../../frontend/dist');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
   if (fs.existsSync(staticPath)) {
     console.log(`🌐 [Static] Serving frontend static files from: ${staticPath}`);
     app.use(express.static(staticPath));

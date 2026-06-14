@@ -174,6 +174,7 @@ export function CalendarNav({ selectedDate, onDateSelect, datesWithData }: Calen
 
             return (
               <div key={dateStr} className="week-day-col">
+                {/* eslint-disable-next-line security/detect-object-injection */}
                 <div className="week-day-label">{weekdays[i]}</div>
                 <div
                   className={classes}

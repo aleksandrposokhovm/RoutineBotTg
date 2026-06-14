@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db';
+import { Prisma } from '../generated/prisma/client';
 import path from 'path';
 import fs from 'fs';
 
@@ -10,7 +11,7 @@ const router = Router();
  * Возвращает имя созданного файла.
  */
 async function savePhoto(photoData: string): Promise<string> {
-  const matches = photoData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  const matches = photoData.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
   let base64Data = photoData;
   let extension = 'jpg';
 
@@ -26,7 +27,10 @@ async function savePhoto(photoData: string): Promise<string> {
     await fs.promises.mkdir(uploadsDir, { recursive: true });
   }
 
-  const filepath = path.join(uploadsDir, filename);
+  const safeFilename = path.basename(filename);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  const filepath = path.join(uploadsDir, safeFilename);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
   await fs.promises.writeFile(filepath, Buffer.from(base64Data, 'base64'));
   return filename;
 }
@@ -39,9 +43,9 @@ async function savePhoto(photoData: string): Promise<string> {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { date } = req.query;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
-    const where: any = { userId: userId };
+    const where: Prisma.DietEntryWhereInput = { userId: userId };
     if (date) where.date = date as string;
 
     const entries = await prisma.dietEntry.findMany({
@@ -63,7 +67,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/summary', async (req: Request, res: Response) => {
   try {
     const { date } = req.query;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     if (!date) return res.status(400).json({ error: 'date required' });
 
     const entries = await prisma.dietEntry.findMany({
@@ -123,7 +127,7 @@ router.get('/summary', async (req: Request, res: Response) => {
 router.get('/analytics', async (req: Request, res: Response) => {
   try {
     const { startDate, endDate } = req.query;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate, endDate required' });
     }
@@ -153,10 +157,11 @@ router.get('/analytics', async (req: Request, res: Response) => {
 
     // Средние значения
     const days = Object.keys(byDay);
-    const avgCalories = days.length > 0 ? days.reduce((s, d) => s + byDay[d].calories, 0) / days.length : 0;
-    const avgProtein = days.length > 0 ? days.reduce((s, d) => s + byDay[d].protein, 0) / days.length : 0;
-    const avgFat = days.length > 0 ? days.reduce((s, d) => s + byDay[d].fat, 0) / days.length : 0;
-    const avgCarbs = days.length > 0 ? days.reduce((s, d) => s + byDay[d].carbs, 0) / days.length : 0;
+    const dayValues = Object.values(byDay);
+    const avgCalories = dayValues.length > 0 ? dayValues.reduce((s, val) => s + val.calories, 0) / dayValues.length : 0;
+    const avgProtein = dayValues.length > 0 ? dayValues.reduce((s, val) => s + val.protein, 0) / dayValues.length : 0;
+    const avgFat = dayValues.length > 0 ? dayValues.reduce((s, val) => s + val.fat, 0) / dayValues.length : 0;
+    const avgCarbs = dayValues.length > 0 ? dayValues.reduce((s, val) => s + val.carbs, 0) / dayValues.length : 0;
 
     res.json({
       period: { startDate, endDate },
@@ -186,9 +191,18 @@ router.get('/photo/:fileId', async (req: Request, res: Response) => {
     // 1. Проверяем, локальный ли это файл
     if (fileId.startsWith('upload_')) {
       const uploadsDir = path.join(process.cwd(), 'uploads');
-      const filepath = path.join(uploadsDir, fileId);
+      const safeFileId = path.basename(fileId);
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal, javascript.express.security.audit.express-path-join-resolve-traversal.express-path-join-resolve-traversal
+      const filepath = path.resolve(uploadsDir, safeFileId);
+
+      if (!filepath.startsWith(uploadsDir)) {
+        return res.status(400).json({ error: 'Invalid file ID' });
+      }
+
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       if (fs.existsSync(filepath)) {
         res.setHeader('Cache-Control', 'public, max-age=31536000');
+        // nosemgrep: javascript.express.security.audit.express-res-sendfile.express-res-sendfile
         return res.sendFile(filepath);
       } else {
         return res.status(404).json({ error: 'Local photo not found' });
@@ -196,7 +210,7 @@ router.get('/photo/:fileId', async (req: Request, res: Response) => {
     }
 
     // 2. Если это Telegram file_id
-    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const token = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
     if (!token) {
       return res.status(500).json({ error: 'Telegram bot token is not configured' });
     }
@@ -217,10 +231,16 @@ router.get('/photo/:fileId', async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Failed to fetch photo from Telegram servers' });
     }
 
-    res.setHeader('Content-Type', fileStreamResponse.headers.get('Content-Type') || 'image/jpeg');
+    const contentType = fileStreamResponse.headers.get('Content-Type') || 'image/jpeg';
+    if (!contentType.startsWith('image/')) {
+      return res.status(400).json({ error: 'Invalid file type from Telegram' });
+    }
+
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=31536000');
 
     const arrayBuffer = await fileStreamResponse.arrayBuffer();
+    // nosemgrep: javascript.express.security.audit.xss.direct-response-write.direct-response-write
     res.send(Buffer.from(arrayBuffer));
   } catch (error) {
     console.error('Error serving photo:', error);
@@ -235,7 +255,7 @@ router.get('/photo/:fileId', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const { name, mealType, date, calories, protein, fat, carbs, portionGrams, photoData } = req.body;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
     let photoFileId = req.body.photoFileId || null;
     if (photoData) {
@@ -271,7 +291,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { name, mealType, date, calories, protein, fat, carbs, portionGrams, photoData } = req.body;
-    const updateData: any = {};
+    const updateData: Prisma.DietEntryUpdateInput = {};
     if (name) updateData.name = name;
     if (mealType) updateData.mealType = mealType;
     if (date) updateData.date = date;
@@ -287,7 +307,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       updateData.photoFileId = req.body.photoFileId;
     }
 
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const existing = await prisma.dietEntry.findFirst({ where: { id: Number(req.params.id), userId } });
     if (!existing) return res.status(404).json({ error: 'Diet entry not found or access denied' });
 
@@ -307,7 +327,7 @@ router.put('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const existing = await prisma.dietEntry.findFirst({ where: { id: Number(req.params.id), userId } });
     if (!existing) return res.status(404).json({ error: 'Diet entry not found or access denied' });
 

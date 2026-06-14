@@ -52,10 +52,10 @@ function App() {
               setUser({ ...profile, timezone: detectedTz });
             }
           }
-        } catch (err: any) {
-          // Пользователь не найден, либо нет доступа
+        } catch (err) {
           setUser(null);
-          setError(err.message || String(err));
+          const errMsg = err instanceof Error ? err.message : String(err);
+          setError(errMsg);
         }
       } catch (error) {
         console.error('Init error:', error);
@@ -73,9 +73,10 @@ function App() {
       const updated = await profileApi.getMe();
       setUser(updated);
       setError(null);
-    } catch (e: any) {
+    } catch (e) {
       console.error('Error refreshing user:', e);
-      setError(e.message || String(e));
+      const errMsg = e instanceof Error ? e.message : String(e);
+      setError(errMsg);
     }
   }, [user]);
 

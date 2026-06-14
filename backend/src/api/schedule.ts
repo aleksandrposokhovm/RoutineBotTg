@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db';
+import { Prisma } from '../generated/prisma/client';
 import { utcToLocalTime, utcToLocalDate, localTimeToUTC, addDaysToDateStr } from '../services/timezone';
 import { createGoogleCalendarEvent, updateGoogleCalendarEvent, deleteGoogleCalendarEvent } from '../services/googleCalendar';
 
@@ -12,7 +13,7 @@ const router = Router();
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { date } = req.query;
-    const user = (req as any).user;
+    const user = req.user!;
 
     // Получаем все события
     const events = await prisma.scheduleEvent.findMany({
@@ -51,7 +52,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const { title, description, date, startTime, endTime } = req.body;
-    const user = (req as any).user;
+    const user = req.user!;
 
     const endTimeDate = endTime < startTime ? addDaysToDateStr(date, 1) : date;
     const startTimeUTC = localTimeToUTC(date, startTime, user.timezone);
@@ -111,7 +112,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { title, description, date, startTime, endTime } = req.body;
-    const user = (req as any).user;
+    const user = req.user!;
 
     const existing = await prisma.scheduleEvent.findFirst({ where: { id: Number(id), userId: user.id } });
     if (!existing) return res.status(404).json({ error: 'Event not found or access denied' });
@@ -120,7 +121,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const newStartTime = startTime || utcToLocalTime(existing.startTimeUTC, user.timezone);
     const newEndTime = endTime || utcToLocalTime(existing.endTimeUTC, user.timezone);
 
-    const updateData: any = {};
+    const updateData: Prisma.ScheduleEventUpdateInput = {};
     if (title) updateData.title = title;
     if (description !== undefined) updateData.description = description;
 
@@ -179,7 +180,7 @@ router.put('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const user = (req as any).user;
+    const user = req.user!;
     const existing = await prisma.scheduleEvent.findFirst({ where: { id: Number(req.params.id), userId: user.id } });
     if (!existing) return res.status(404).json({ error: 'Event not found or access denied' });
 

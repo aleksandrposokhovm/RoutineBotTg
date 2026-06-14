@@ -1,7 +1,16 @@
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
-import * as fs from 'fs';
 import * as path from 'path';
+
+
+export interface MappedScheduleEvent {
+  id: number;
+  title: string;
+  description: string | null;
+  date: string;
+  startTime: string;
+  endTime: string;
+}
 
 let currentKeysStr = '';
 let clients: GoogleGenAI[] = [];
@@ -32,17 +41,18 @@ function initOrRefreshClients() {
 async function executeWithRetry<T>(fn: (client: GoogleGenAI) => Promise<T>): Promise<T> {
   initOrRefreshClients();
   const totalClients = clients.length;
-  let lastError: any = null;
+  let lastError: unknown = null;
 
   for (let attempt = 0; attempt < totalClients; attempt++) {
     const currentIndex = (activeKeyIndex + attempt) % totalClients;
+    // eslint-disable-next-line security/detect-object-injection
     const client = clients[currentIndex];
     try {
       const result = await fn(client);
       activeKeyIndex = currentIndex;
       return result;
-    } catch (error: any) {
-      console.error(`[Gemini Rotation] Error with key index ${currentIndex}:`, error.message || error);
+    } catch (error) {
+      console.error('[Gemini Rotation] Error with key index %d:', currentIndex, error instanceof Error ? error.message : String(error));
       lastError = error;
 
       if (totalClients > 1 && attempt < totalClients - 1) {
@@ -61,15 +71,15 @@ async function generateContent(
   return executeWithRetry((client) => client.models.generateContent(params));
 }
 
-function safeParseFloat(val: any, fallback: number = 0): number {
+function safeParseFloat(val: unknown, fallback: number = 0): number {
   if (val === null || val === undefined) return fallback;
-  const parsed = parseFloat(val);
+  const parsed = parseFloat(String(val));
   return isNaN(parsed) ? fallback : parsed;
 }
 
-function safeParseFloatOrNull(val: any): number | null {
+function safeParseFloatOrNull(val: unknown): number | null {
   if (val === null || val === undefined) return null;
-  const parsed = parseFloat(val);
+  const parsed = parseFloat(String(val));
   return isNaN(parsed) ? null : parsed;
 }
 
@@ -79,7 +89,47 @@ function safeParseFloatOrNull(val: any): number | null {
 
 export interface AIIntent {
   action: 'add_schedule' | 'add_plan' | 'add_diet' | 'delete_schedule' | 'delete_plan' | 'delete_diet' | 'complete_plan' | 'postpone_plan' | 'update_timezone' | 'edit_schedule' | 'edit_plan' | 'edit_diet' | 'get_history' | 'unknown';
-  data: any;
+  data: {
+    title?: string;
+    description?: string | null;
+    date?: string;
+    startDate?: string;
+    endDate?: string;
+    allTime?: boolean;
+    completed?: boolean;
+    type?: string;
+    searchQuery?: string;
+    startTime?: string;
+    endTime?: string;
+    timezone?: string;
+    days?: number;
+    mealType?: string;
+    photoFileId?: string | null;
+    needsPortionClarification?: boolean;
+    name?: string;
+    calories?: number;
+    protein?: number;
+    fat?: number;
+    carbs?: number;
+    portionGrams?: number | null;
+    city?: string;
+    tasks?: Array<{ title: string; description?: string | null } | string>;
+    targetDate?: string;
+    newData?: {
+      title?: string;
+      description?: string | null;
+      date?: string;
+      targetDate?: string;
+      startTime?: string;
+      endTime?: string;
+      name?: string;
+      calories?: number;
+      protein?: number;
+      fat?: number;
+      carbs?: number;
+      portionGrams?: number | null;
+    };
+  };
   confirmationMessage?: string;
   userQueryText?: string;
 }
@@ -393,7 +443,7 @@ ${caption ? `Пользователь также написал подпись: 
     const data = JSON.parse(responseText);
     return {
       name: String(data.name || caption || 'Неизвестное блюдо'),
-      mealType: (['breakfast', 'lunch', 'dinner', 'snack'].includes(data.mealType) ? data.mealType : 'snack') as any,
+      mealType: (['breakfast', 'lunch', 'dinner', 'snack'].includes(data.mealType) ? data.mealType : 'snack') as AIDietAnalysis['mealType'],
       calories: safeParseFloat(data.calories, 0),
       protein: safeParseFloat(data.protein, 0),
       fat: safeParseFloat(data.fat, 0),
@@ -569,10 +619,31 @@ export async function extractGramsFromVoice(audioBuffer: Buffer): Promise<number
 export async function generateHistoryResponse(
   userQuery: string,
   data: {
-    plans?: any[];
-    schedule?: any[];
-    diet?: any[];
-    nutritionProfile?: any;
+    plans?: Array<{
+      title: string;
+      description: string | null;
+      date: string;
+      completed: boolean;
+      completedAt: Date | null;
+    }>;
+    schedule?: MappedScheduleEvent[];
+    diet?: Array<{
+      name: string;
+      mealType: string;
+      date: string;
+      calories: number;
+      protein: number;
+      fat: number;
+      carbs: number;
+      portionGrams: number | null;
+    }>;
+    nutritionProfile?: {
+      dailyCalories: number;
+      dailyProtein: number;
+      dailyFat: number;
+      dailyCarbs: number;
+      goal: string;
+    } | null;
     meta: {
       date?: string;
       startDate?: string;

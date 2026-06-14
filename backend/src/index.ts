@@ -10,6 +10,16 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import * as Sentry from '@sentry/node';
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    tracesSampleRate: 1.0,
+  });
+  console.log('🛡️ Sentry initialized in backend');
+}
+
 import { createBot } from './bot';
 import { createApp } from './api';
 import { startScheduler, stopScheduler } from './services/scheduler';

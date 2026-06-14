@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { CalendarNav } from '../components/CalendarNav';
 import { KBJUChart } from '../components/KBJUChart';
 import { ConfirmModal } from '../components/ConfirmModal';
-import { dietApi, profileApi, type DietEntryItem, type DietSummary, type NutritionProfile } from '../api';
+import { dietApi, profileApi, type DietEntryItem, type DietSummary, type NutritionProfile, API_BASE } from '../api';
 import { formatDate, formatDateHuman } from '../utils/dates';
 import { EditDietView } from '../components/EditDietView';
 
@@ -327,6 +327,7 @@ export function DietPage({ nutritionProfile, onProfileUpdated }: DietPageProps) 
         ) : (
           <>
             {['breakfast', 'lunch', 'dinner', 'snack'].map(mealType => {
+              // eslint-disable-next-line security/detect-object-injection
               const mealEntries = groupedEntries[mealType];
               if (!mealEntries || mealEntries.length === 0) return null;
 
@@ -338,6 +339,7 @@ export function DietPage({ nutritionProfile, onProfileUpdated }: DietPageProps) 
                     color: 'var(--text-muted)',
                     marginBottom: 8,
                   }}>
+                    {/* eslint-disable-next-line security/detect-object-injection */}
                     {MEAL_TYPE_LABELS[mealType] || mealType}
                   </div>
 
@@ -345,7 +347,7 @@ export function DietPage({ nutritionProfile, onProfileUpdated }: DietPageProps) 
                     <div key={entry.id} className="diet-entry" onClick={() => setEditingDiet(entry)}>
                       {entry.photoFileId && (
                         <img 
-                          src={`/api/diet/photo/${entry.photoFileId}`} 
+                          src={`${API_BASE}/diet/photo/${entry.photoFileId}`} 
                           alt={entry.name} 
                           className="diet-entry-photo"
                         />

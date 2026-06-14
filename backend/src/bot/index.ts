@@ -2,6 +2,7 @@ import { Telegraf, Context, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import crypto from 'crypto';
 import prisma from '../db';
+import { Plan, ScheduleEvent, DietEntry, User, Prisma } from '../generated/prisma/client';
 import {
   processTextMessage,
   processVoiceMessage,
@@ -24,24 +25,57 @@ import { createGoogleCalendarEvent, updateGoogleCalendarEvent, deleteGoogleCalen
 
 const OWNER_TG_ID = parseInt(process.env.OWNER_TG_ID || '0', 10);
 
+interface DeletionData {
+  ids: number[];
+  query: string;
+}
+
+interface PortionDietData {
+  name?: string;
+  calories?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  mealType?: string;
+  photoFileId?: string | null;
+  portionGrams?: number | null;
+  needsPortionClarification?: boolean;
+  date?: string;
+}
+
+interface EditNewData {
+  title?: string;
+  description?: string | null;
+  date?: string;
+  targetDate?: string;
+  startTime?: string;
+  endTime?: string;
+  name?: string;
+  calories?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  portionGrams?: number | null;
+}
+
 // Состояние ожидания подтверждения удаления
 const pendingDeletions = new Map<number, {
   action: string;
-  data: any;
+  data: DeletionData;
   expiresAt: number;
 }>();
 
 // Состояние ожидания размера порции
 const pendingPortions = new Map<number, {
-  dietData: any;
+  dietData: PortionDietData;
   expiresAt: number;
 }>();
 
 // Состояние ожидания подтверждения редактирования
 const pendingEdits = new Map<number, {
   action: string;
-  item: any;
-  newData: any;
+  item: Plan | ScheduleEvent | DietEntry;
+  newData: EditNewData;
   expiresAt: number;
 }>();
 
@@ -88,14 +122,18 @@ async function ensureUser(telegramId: number, firstName?: string, lastName?: str
 /**
  * Обработать намерение ИИ и выполнить действие
  */
-async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
+async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
   const userId = user.id;
   const timezone = user.timezone;
 
   switch (intent.action) {
     // ─── ДОБАВИТЬ В РАСПИСАНИЕ ───
     case 'add_schedule': {
-      const { title, description, date, startTime, endTime } = intent.data;
+      const title = intent.data.title || 'Без названия';
+      const description = intent.data.description;
+      const date = intent.data.date;
+      const startTime = intent.data.startTime || '00:00';
+      const endTime = intent.data.endTime || '00:00';
       const targetDate = date || getTodayDateInTz(timezone);
 
       const endTimeDate = endTime < startTime ? addDaysToDateStr(targetDate, 1) : targetDate;
@@ -147,11 +185,13 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
       if (tasks && Array.isArray(tasks)) {
         for (const task of tasks) {
+          const taskTitle = typeof task === 'string' ? task : (task.title || 'Без названия');
+          const taskDesc = typeof task === 'string' ? null : (task.description || null);
           await prisma.plan.create({
             data: {
               userId,
-              title: task.title,
-              description: task.description || null,
+              title: taskTitle,
+              description: taskDesc,
               date: targetDate,
               originalDate: targetDate,
               groupId: crypto.randomUUID()
@@ -181,7 +221,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       await prisma.dietEntry.create({
         data: {
           userId,
-          name: dietData.name,
+          name: dietData.name || 'Неизвестное блюдо',
           mealType: dietData.mealType || 'snack',
           date: targetDate,
           calories: dietData.calories || 0,
@@ -195,8 +235,8 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
       await ctx.reply(
         `✅ Записано в рацион!\n\n` +
-        `🍽 ${dietData.name}\n` +
-        `📊 ${Math.round(dietData.calories)} ккал | Б: ${Math.round(dietData.protein)}г | Ж: ${Math.round(dietData.fat)}г | У: ${Math.round(dietData.carbs)}г` +
+        `🍽 ${dietData.name || 'Неизвестное блюдо'}\n` +
+        `📊 ${Math.round(dietData.calories || 0)} ккал | Б: ${Math.round(dietData.protein || 0)}г | Ж: ${Math.round(dietData.fat || 0)}г | У: ${Math.round(dietData.carbs || 0)}г` +
         (dietData.portionGrams ? `\n⚖️ Порция: ${dietData.portionGrams}г` : '')
       );
       break;
@@ -233,7 +273,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
       pendingDeletions.set(ctx.from!.id, {
         action: 'delete_schedule',
-        data: { ids: events.map(e => e.id), query: intent.data.searchQuery },
+        data: { ids: events.map(e => e.id), query: intent.data.searchQuery || '' },
         expiresAt: Date.now() + 60 * 1000
       });
 
@@ -273,7 +313,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
       pendingDeletions.set(ctx.from!.id, {
         action: 'delete_plan',
-        data: { ids: plans.map(p => p.id), query: intent.data.searchQuery },
+        data: { ids: plans.map(p => p.id), query: intent.data.searchQuery || '' },
         expiresAt: Date.now() + 60 * 1000
       });
 
@@ -313,7 +353,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
       pendingDeletions.set(ctx.from!.id, {
         action: 'delete_diet',
-        data: { ids: entries.map(e => e.id), query: intent.data.searchQuery },
+        data: { ids: entries.map(e => e.id), query: intent.data.searchQuery || '' },
         expiresAt: Date.now() + 60 * 1000
       });
 
@@ -350,8 +390,8 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       }
 
       const newData = intent.data.newData || {};
-      let targetDate = newData.date || dateFilter || utcToLocalDate(event.startTimeUTC, timezone);
-      let newStartStr = newData.startTime || utcToLocalTime(event.startTimeUTC, timezone);
+      const targetDate = newData.date || dateFilter || utcToLocalDate(event.startTimeUTC, timezone);
+      const newStartStr = newData.startTime || utcToLocalTime(event.startTimeUTC, timezone);
       let newEndStr = newData.endTime;
 
       if (!newEndStr && newData.startTime) {
@@ -376,7 +416,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
         expiresAt: Date.now() + 60 * 1000
       });
 
-      let changes: string[] = [];
+      const changes: string[] = [];
       if (newData.title) changes.push(`название на "${newData.title}"`);
       if (newData.date) changes.push(`дату на ${newData.date}`);
       if (newData.startTime || newData.endTime) changes.push(`время на ${newStartStr}-${newEndStr}`);
@@ -422,7 +462,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
         expiresAt: Date.now() + 60 * 1000
       });
 
-      let changes: string[] = [];
+      const changes: string[] = [];
       if (newData.title) changes.push(`название на "${newData.title}"`);
       if (newData.description) changes.push(`описание`);
       if (newData.date) changes.push(`дату на ${newData.date}`);
@@ -468,7 +508,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
         expiresAt: Date.now() + 60 * 1000
       });
 
-      let changes: string[] = [];
+      const changes: string[] = [];
       if (newData.name) changes.push(`название на "${newData.name}"`);
       if (newData.portionGrams) changes.push(`порцию на ${newData.portionGrams}г`);
       if (newData.calories) changes.push(`калории на ${newData.calories}`);
@@ -584,7 +624,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
     // ─── ОБНОВИТЬ ЧАСОВОЙ ПОЯС ───
     case 'update_timezone': {
-      const newTz = intent.data.timezone;
+      const newTz = intent.data.timezone || '';
       if (!isValidTimezone(newTz)) {
         await ctx.reply(`❌ Не могу распознать часовой пояс "${newTz}". Попробуйте уточнить город.`);
         return;
@@ -612,7 +652,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       const todayStr = getTodayDateInTz(timezone);
 
       // 1. Фильтр по датам для DietEntry
-      let dateFilterDiet: any = undefined;
+      let dateFilterDiet: string | Prisma.StringFilter | undefined = undefined;
       if (startDate && endDate) {
         dateFilterDiet = { gte: startDate, lte: endDate };
       } else if (startDate) {
@@ -620,11 +660,11 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       } else if (endDate) {
         dateFilterDiet = { lte: endDate };
       } else if (targetDate) {
-        dateFilterDiet = targetDate;
+        dateFilterDiet = targetDate as string;
       }
 
       // 2. Фильтр по датам для ScheduleEvent (в UTC)
-      let startTimeUTCFilter: any = undefined;
+      let startTimeUTCFilter: Prisma.DateTimeFilter | undefined = undefined;
       if (startDate || endDate || targetDate) {
         startTimeUTCFilter = {};
         if (startDate) {
@@ -650,9 +690,9 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       }
 
       // 3. Загружаем планы с учетом бэклога невыполненных задач
-      let plans: any[] = [];
+      let plans: Plan[] = [];
       if (queryType === 'plans' || queryType === 'all') {
-        const whereClause: any = { userId };
+        const whereClause: Prisma.PlanWhereInput = { userId };
         
         if (startDate || endDate || targetDate || allTime || searchQuery) {
           // Если есть явный поиск, диапазон дат или запрос на всё время
@@ -684,7 +724,7 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
         } else {
           // Если запрос без конкретных дат (например, "какие у меня планы?", "список дел")
           // Загружаем сегодняшние планы И все невыполненные планы из прошлого/будущего
-          const plansClause: any = {
+          const plansClause: Prisma.PlanWhereInput = {
             userId,
             OR: [
               { date: todayStr }, // Всё за сегодня
@@ -712,9 +752,17 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       }
 
       // 4. Загружаем расписание
-      let events: any[] = [];
+      interface MappedScheduleEvent {
+        id: number;
+        title: string;
+        description: string | null;
+        date: string;
+        startTime: string;
+        endTime: string;
+      }
+      let events: MappedScheduleEvent[] = [];
       if (queryType === 'schedule' || queryType === 'all') {
-        const whereClause: any = { userId };
+        const whereClause: Prisma.ScheduleEventWhereInput = { userId };
         if (startTimeUTCFilter) {
           whereClause.startTimeUTC = startTimeUTCFilter;
         }
@@ -744,9 +792,9 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
       }
 
       // 5. Загружаем рацион питания
-      let dietEntries: any[] = [];
+      let dietEntries: DietEntry[] = [];
       if (queryType === 'diet' || queryType === 'all') {
-        const whereClause: any = { userId };
+        const whereClause: Prisma.DietEntryWhereInput = { userId };
         if (startDate || endDate || targetDate || allTime || searchQuery) {
           if (dateFilterDiet) {
             whereClause.date = dateFilterDiet;
@@ -820,14 +868,9 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: any) {
 
       await ctx.sendChatAction('typing');
 
-      let userQuery = '';
-      if (ctx.message && 'text' in ctx.message) {
-        userQuery = ctx.message.text;
-      } else if (intent.userQueryText) {
-        userQuery = intent.userQueryText;
-      } else {
-        userQuery = `Покажи данные за ${targetDate || (startDate && endDate ? `${startDate} — ${endDate}` : '') || 'выбранный период'}`;
-      }
+      const userQuery = (ctx.message && 'text' in ctx.message)
+        ? ctx.message.text
+        : (intent.userQueryText || `Покажи данные за ${targetDate || (startDate && endDate ? `${startDate} — ${endDate}` : '') || 'выбранный период'}`);
 
       const currentDatetime = getCurrentDatetimeInTz(timezone);
       const answer = await generateHistoryResponse(userQuery, historyData, timezone, currentDatetime);
@@ -862,7 +905,7 @@ export function createBot(): Telegraf {
 
   // Глобальный обработчик ошибок
   bot.catch((err, ctx) => {
-    console.error(`Error for ${ctx.updateType}`, err);
+    console.error('Error for %s', ctx.updateType, err);
     try {
       ctx.reply('❌ Произошла непредвиденная ошибка. Попробуйте позже.');
     } catch (e) {
@@ -870,9 +913,8 @@ export function createBot(): Telegraf {
     }
   });
 
-  // ─── /start ───
   bot.start(async (ctx) => {
-    const user = await ensureUser(ctx.from.id, ctx.from.first_name, ctx.from.last_name);
+    await ensureUser(ctx.from.id, ctx.from.first_name, ctx.from.last_name);
     await ctx.reply(
       `👋 Привет, ${ctx.from.first_name}!\n\n` +
       `Я — твой персональный RoutineBot 🤖\n\n` +
@@ -953,7 +995,10 @@ export function createBot(): Telegraf {
           const user = await ensureUser(tgId);
 
           if (pendingEdit.action === 'edit_schedule') {
-            const { title, targetDate, startTime, endTime } = pendingEdit.newData;
+            const title = pendingEdit.newData.title || '';
+            const targetDate = pendingEdit.newData.targetDate || getTodayDateInTz(user.timezone);
+            const startTime = pendingEdit.newData.startTime || '00:00';
+            const endTime = pendingEdit.newData.endTime || '00:00';
             const endTimeDate = endTime < startTime ? addDaysToDateStr(targetDate, 1) : targetDate;
             const startTimeUTC = localTimeToUTC(targetDate, startTime, user.timezone);
             const endTimeUTC = localTimeToUTC(endTimeDate, endTime, user.timezone);
@@ -1041,7 +1086,8 @@ export function createBot(): Telegraf {
       if (Date.now() >= pendingPortion.expiresAt) {
         pendingPortions.delete(tgId);
       } else {
-        const match = text.match(/^\s*(\d+(?:\.\d+)?)\s*(?:г|грамм|g|gram)?\s*$/i);
+        // eslint-disable-next-line security/detect-unsafe-regex
+        const match = text.trim().match(/^(\d+(?:\.\d+)?)\s*(?:г|грамм|g|gram)?$/i);
         if (match) {
           const grams = parseFloat(match[1]);
           if (grams > 0) {
@@ -1052,18 +1098,22 @@ export function createBot(): Telegraf {
 
             // Пересчитываем КБЖУ пропорционально порции
             const dietData = pendingPortion.dietData;
+            const calories = dietData.calories || 0;
+            const protein = dietData.protein || 0;
+            const fat = dietData.fat || 0;
+            const carbs = dietData.carbs || 0;
             const scaleFactor = grams / (dietData.portionGrams || 100);
 
             await prisma.dietEntry.create({
               data: {
                 userId: user.id,
-                name: dietData.name,
+                name: dietData.name || 'Неизвестное блюдо',
                 mealType: dietData.mealType || 'snack',
                 date: targetDate,
-                calories: Math.round(dietData.calories * scaleFactor),
-                protein: Math.round(dietData.protein * scaleFactor * 10) / 10,
-                fat: Math.round(dietData.fat * scaleFactor * 10) / 10,
-                carbs: Math.round(dietData.carbs * scaleFactor * 10) / 10,
+                calories: Math.round(calories * scaleFactor),
+                protein: Math.round(protein * scaleFactor * 10) / 10,
+                fat: Math.round(fat * scaleFactor * 10) / 10,
+                carbs: Math.round(carbs * scaleFactor * 10) / 10,
                 portionGrams: grams,
                 photoFileId: dietData.photoFileId || null
               }
@@ -1071,9 +1121,9 @@ export function createBot(): Telegraf {
 
             await ctx.reply(
               `✅ Записано в рацион!\n\n` +
-              `🍽 ${dietData.name}\n` +
+              `🍽 ${dietData.name || 'Неизвестное блюдо'}\n` +
               `⚖️ Порция: ${grams}г\n` +
-              `📊 ${Math.round(dietData.calories * scaleFactor)} ккал | Б: ${Math.round(dietData.protein * scaleFactor)}г | Ж: ${Math.round(dietData.fat * scaleFactor)}г | У: ${Math.round(dietData.carbs * scaleFactor)}г`
+              `📊 ${Math.round(calories * scaleFactor)} ккал | Б: ${Math.round(protein * scaleFactor)}г | Ж: ${Math.round(fat * scaleFactor)}г | У: ${Math.round(carbs * scaleFactor)}г`
             );
             return;
           }
@@ -1162,7 +1212,10 @@ export function createBot(): Telegraf {
             const user = await ensureUser(tgId);
 
             if (pendingEdit.action === 'edit_schedule') {
-              const { title, targetDate, startTime, endTime } = pendingEdit.newData;
+              const title = pendingEdit.newData.title || '';
+              const targetDate = pendingEdit.newData.targetDate || getTodayDateInTz(user.timezone);
+              const startTime = pendingEdit.newData.startTime || '00:00';
+              const endTime = pendingEdit.newData.endTime || '00:00';
               const startTimeUTC = localTimeToUTC(targetDate, startTime, user.timezone);
               const endTimeUTC = localTimeToUTC(targetDate, endTime, user.timezone);
 
@@ -1254,18 +1307,22 @@ export function createBot(): Telegraf {
             pendingPortions.delete(tgId);
             const targetDate = getTodayDateInTz(user.timezone);
             const dietData = pendingPortion.dietData;
+            const calories = dietData.calories || 0;
+            const protein = dietData.protein || 0;
+            const fat = dietData.fat || 0;
+            const carbs = dietData.carbs || 0;
             const scaleFactor = grams / (dietData.portionGrams || 100);
 
             await prisma.dietEntry.create({
               data: {
                 userId: user.id,
-                name: dietData.name,
+                name: dietData.name || 'Неизвестное блюдо',
                 mealType: dietData.mealType || 'snack',
                 date: targetDate,
-                calories: Math.round(dietData.calories * scaleFactor),
-                protein: Math.round(dietData.protein * scaleFactor * 10) / 10,
-                fat: Math.round(dietData.fat * scaleFactor * 10) / 10,
-                carbs: Math.round(dietData.carbs * scaleFactor * 10) / 10,
+                calories: Math.round(calories * scaleFactor),
+                protein: Math.round(protein * scaleFactor * 10) / 10,
+                fat: Math.round(fat * scaleFactor * 10) / 10,
+                carbs: Math.round(carbs * scaleFactor * 10) / 10,
                 portionGrams: grams,
                 photoFileId: dietData.photoFileId || null
               }
@@ -1273,9 +1330,9 @@ export function createBot(): Telegraf {
 
             await ctx.reply(
               `✅ Записано в рацион!\n\n` +
-              `🍽 ${dietData.name}\n` +
+              `🍽 ${dietData.name || 'Неизвестное блюдо'}\n` +
               `⚖️ Порция: ${grams}г\n` +
-              `📊 ${Math.round(dietData.calories * scaleFactor)} ккал | Б: ${Math.round(dietData.protein * scaleFactor)}г | Ж: ${Math.round(dietData.fat * scaleFactor)}г | У: ${Math.round(dietData.carbs * scaleFactor)}г`
+              `📊 ${Math.round(calories * scaleFactor)} ккал | Б: ${Math.round(protein * scaleFactor)}г | Ж: ${Math.round(fat * scaleFactor)}г | У: ${Math.round(carbs * scaleFactor)}г`
             );
             return;
           } else {

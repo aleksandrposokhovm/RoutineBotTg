@@ -1,7 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
-import dotenv from 'dotenv';
-import * as path from 'path';
-
+import { GoogleGenAI } from "@google/genai";
+import dotenv from "dotenv";
+import * as path from "path";
 
 export interface MappedScheduleEvent {
   id: number;
@@ -12,33 +11,40 @@ export interface MappedScheduleEvent {
   endTime: string;
 }
 
-let currentKeysStr = '';
+let currentKeysStr = "";
 let clients: GoogleGenAI[] = [];
 let activeKeyIndex = 0;
 
 function initOrRefreshClients() {
   try {
-    const envPath = path.join(__dirname, '../../.env');
+    const envPath = path.join(__dirname, "../../.env");
     dotenv.config({ path: envPath, override: true });
   } catch (error) {
-    console.error('[Gemini Rotation] Error reloading .env file:', error);
+    console.error("[Gemini Rotation] Error reloading .env file:", error);
   }
 
-  const apiKeysStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+  const apiKeysStr =
+    process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "";
   if (apiKeysStr !== currentKeysStr || clients.length === 0) {
-    const apiKeys = apiKeysStr.split(',').map(k => k.trim()).filter(Boolean);
-    console.log(`[Gemini Rotation] Found ${apiKeys.length} API key(s) in .env. Initializing/updating clients...`);
-    clients = apiKeys.map(key => new GoogleGenAI({ apiKey: key }));
+    const apiKeys = apiKeysStr
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    console.log(
+      `[Gemini Rotation] Found ${apiKeys.length} API key(s) in .env. Initializing/updating clients...`,
+    );
+    clients = apiKeys.map((key) => new GoogleGenAI({ apiKey: key }));
     if (clients.length === 0) {
-      clients = [new GoogleGenAI({ apiKey: '' })];
+      clients = [new GoogleGenAI({ apiKey: "" })];
     }
     currentKeysStr = apiKeysStr;
     activeKeyIndex = 0;
   }
 }
 
-
-async function executeWithRetry<T>(fn: (client: GoogleGenAI) => Promise<T>): Promise<T> {
+async function executeWithRetry<T>(
+  fn: (client: GoogleGenAI) => Promise<T>,
+): Promise<T> {
   initOrRefreshClients();
   const totalClients = clients.length;
   let lastError: unknown = null;
@@ -52,22 +58,28 @@ async function executeWithRetry<T>(fn: (client: GoogleGenAI) => Promise<T>): Pro
       activeKeyIndex = currentIndex;
       return result;
     } catch (error) {
-      console.error('[Gemini Rotation] Error with key index %d:', currentIndex, error instanceof Error ? error.message : String(error));
+      console.error(
+        "[Gemini Rotation] Error with key index %d:",
+        currentIndex,
+        error instanceof Error ? error.message : String(error),
+      );
       lastError = error;
 
       if (totalClients > 1 && attempt < totalClients - 1) {
         const nextIndex = (currentIndex + 1) % totalClients;
-        console.warn(`[Gemini Rotation] Rotating to API key index ${nextIndex}. Attempt ${attempt + 1} of ${totalClients}`);
+        console.warn(
+          `[Gemini Rotation] Rotating to API key index ${nextIndex}. Attempt ${attempt + 1} of ${totalClients}`,
+        );
       }
     }
   }
 
-  throw lastError || new Error('All Gemini API keys failed.');
+  throw lastError || new Error("All Gemini API keys failed.");
 }
 
 async function generateContent(
-  params: Parameters<GoogleGenAI['models']['generateContent']>[0]
-): ReturnType<GoogleGenAI['models']['generateContent']> {
+  params: Parameters<GoogleGenAI["models"]["generateContent"]>[0],
+): ReturnType<GoogleGenAI["models"]["generateContent"]> {
   return executeWithRetry((client) => client.models.generateContent(params));
 }
 
@@ -88,7 +100,21 @@ function safeParseFloatOrNull(val: unknown): number | null {
 // ────────────────────────────────────────
 
 export interface AIIntent {
-  action: 'add_schedule' | 'add_plan' | 'add_diet' | 'delete_schedule' | 'delete_plan' | 'delete_diet' | 'complete_plan' | 'postpone_plan' | 'update_timezone' | 'edit_schedule' | 'edit_plan' | 'edit_diet' | 'get_history' | 'unknown';
+  action:
+    | "add_schedule"
+    | "add_plan"
+    | "add_diet"
+    | "delete_schedule"
+    | "delete_plan"
+    | "delete_diet"
+    | "complete_plan"
+    | "postpone_plan"
+    | "update_timezone"
+    | "edit_schedule"
+    | "edit_plan"
+    | "edit_diet"
+    | "get_history"
+    | "unknown";
   data: {
     title?: string;
     description?: string | null;
@@ -136,7 +162,7 @@ export interface AIIntent {
 
 export interface AIDietAnalysis {
   name: string;
-  mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  mealType: "breakfast" | "lunch" | "dinner" | "snack";
   calories: number;
   protein: number;
   fat: number;
@@ -309,30 +335,35 @@ unknown:
 export async function processTextMessage(
   text: string,
   userTimezone: string,
-  currentDatetime: string
+  currentDatetime: string,
 ): Promise<AIIntent> {
-  const prompt = SYSTEM_PROMPT
-    .replace('{CURRENT_DATETIME}', currentDatetime)
-    .replace('{USER_TIMEZONE}', userTimezone);
+  const prompt = SYSTEM_PROMPT.replace(
+    "{CURRENT_DATETIME}",
+    currentDatetime,
+  ).replace("{USER_TIMEZONE}", userTimezone);
 
   const response = await generateContent({
-    model: 'gemini-2.5-flash',
+    model: "gemini-2.5-flash",
     contents: [
-      { role: 'user', parts: [{ text: `${prompt}\n\nСообщение пользователя:\n${text}` }] }
+      {
+        role: "user",
+        parts: [{ text: `${prompt}\n\nСообщение пользователя:\n${text}` }],
+      },
     ],
     config: {
-      responseMimeType: 'application/json',
-    }
+      responseMimeType: "application/json",
+    },
   });
 
-  const responseText = response.text || '{}';
+  const responseText = response.text || "{}";
   try {
     return JSON.parse(responseText) as AIIntent;
   } catch {
     return {
-      action: 'unknown',
+      action: "unknown",
       data: {},
-      confirmationMessage: 'Не удалось обработать ответ ИИ. Попробуйте ещё раз.'
+      confirmationMessage:
+        "Не удалось обработать ответ ИИ. Попробуйте ещё раз.",
     };
   }
 }
@@ -343,43 +374,47 @@ export async function processTextMessage(
 export async function processVoiceMessage(
   audioBuffer: Buffer,
   userTimezone: string,
-  currentDatetime: string
+  currentDatetime: string,
 ): Promise<AIIntent> {
-  const prompt = SYSTEM_PROMPT
-    .replace('{CURRENT_DATETIME}', currentDatetime)
-    .replace('{USER_TIMEZONE}', userTimezone);
+  const prompt = SYSTEM_PROMPT.replace(
+    "{CURRENT_DATETIME}",
+    currentDatetime,
+  ).replace("{USER_TIMEZONE}", userTimezone);
 
-  const audioBase64 = audioBuffer.toString('base64');
+  const audioBase64 = audioBuffer.toString("base64");
 
   const response = await generateContent({
-    model: 'gemini-2.5-flash',
+    model: "gemini-2.5-flash",
     contents: [
       {
-        role: 'user',
+        role: "user",
         parts: [
-          { text: `${prompt}\n\nПользователь отправил голосовое сообщение. Расшифруй его и определи намерение:` },
+          {
+            text: `${prompt}\n\nПользователь отправил голосовое сообщение. Расшифруй его и определи намерение:`,
+          },
           {
             inlineData: {
-              mimeType: 'audio/ogg',
-              data: audioBase64
-            }
-          }
-        ]
-      }
+              mimeType: "audio/ogg",
+              data: audioBase64,
+            },
+          },
+        ],
+      },
     ],
     config: {
-      responseMimeType: 'application/json',
-    }
+      responseMimeType: "application/json",
+    },
   });
 
-  const responseText = response.text || '{}';
+  const responseText = response.text || "{}";
   try {
     return JSON.parse(responseText) as AIIntent;
   } catch {
     return {
-      action: 'unknown',
+      action: "unknown",
       data: {},
-      confirmationMessage: 'Не удалось обработать голосовое сообщение. Попробуйте ещё раз.'
+      confirmationMessage:
+        "Не удалось обработать голосовое сообщение. Попробуйте ещё раз.",
     };
   }
 }
@@ -391,9 +426,9 @@ export async function analyzePhotoForDiet(
   photoBuffer: Buffer,
   caption: string | undefined,
   userTimezone: string,
-  currentDatetime: string
+  currentDatetime: string,
 ): Promise<AIDietAnalysis> {
-  const photoBase64 = photoBuffer.toString('base64');
+  const photoBase64 = photoBuffer.toString("base64");
 
   const prompt = `Ты — эксперт по питанию. Проанализируй фотографию еды и определи:
 1. Название блюда (на русском языке)
@@ -401,7 +436,7 @@ export async function analyzePhotoForDiet(
 3. Примерный КБЖУ (калории, белки, жиры, углеводы)
 4. Примерный вес порции в граммах
 
-${caption ? `Пользователь также написал подпись: "${caption}"` : ''}
+${caption ? `Пользователь также написал подпись: "${caption}"` : ""}
 
 ВАЖНО: Поле "name" (название блюда) должно быть СТРОГО на русском языке.
 
@@ -418,49 +453,56 @@ ${caption ? `Пользователь также написал подпись: 
 }`;
 
   const response = await generateContent({
-    model: 'gemini-2.5-flash',
+    model: "gemini-2.5-flash",
     contents: [
       {
-        role: 'user',
+        role: "user",
         parts: [
           { text: prompt },
           {
             inlineData: {
-              mimeType: 'image/jpeg',
-              data: photoBase64
-            }
-          }
-        ]
-      }
+              mimeType: "image/jpeg",
+              data: photoBase64,
+            },
+          },
+        ],
+      },
     ],
     config: {
-      responseMimeType: 'application/json',
-    }
+      responseMimeType: "application/json",
+    },
   });
 
-  const responseText = response.text || '{}';
+  const responseText = response.text || "{}";
   try {
     const data = JSON.parse(responseText);
     return {
-      name: String(data.name || caption || 'Неизвестное блюдо'),
-      mealType: (['breakfast', 'lunch', 'dinner', 'snack'].includes(data.mealType) ? data.mealType : 'snack') as AIDietAnalysis['mealType'],
+      name: String(data.name || caption || "Неизвестное блюдо"),
+      mealType: (["breakfast", "lunch", "dinner", "snack"].includes(
+        data.mealType,
+      )
+        ? data.mealType
+        : "snack") as AIDietAnalysis["mealType"],
       calories: safeParseFloat(data.calories, 0),
       protein: safeParseFloat(data.protein, 0),
       fat: safeParseFloat(data.fat, 0),
       carbs: safeParseFloat(data.carbs, 0),
       portionGrams: safeParseFloatOrNull(data.portionGrams),
-      needsPortionClarification: data.needsPortionClarification !== undefined ? Boolean(data.needsPortionClarification) : true
+      needsPortionClarification:
+        data.needsPortionClarification !== undefined
+          ? Boolean(data.needsPortionClarification)
+          : true,
     };
   } catch {
     return {
-      name: caption || 'Неизвестное блюдо',
-      mealType: 'snack',
+      name: caption || "Неизвестное блюдо",
+      mealType: "snack",
       calories: 0,
       protein: 0,
       fat: 0,
       carbs: 0,
       portionGrams: null,
-      needsPortionClarification: true
+      needsPortionClarification: true,
     };
   }
 }
@@ -480,9 +522,9 @@ export async function calculateNutritionGoals(profile: {
 - Рост: ${profile.height} см
 - Вес: ${profile.weight} кг
 - Возраст: ${profile.age} лет
-- Пол: ${profile.gender === 'male' ? 'мужской' : 'женский'}
+- Пол: ${profile.gender === "male" ? "мужской" : "женский"}
 - Уровень активности: ${profile.activityLevel}
-- Цель: ${profile.goal === 'lose' ? 'похудение' : profile.goal === 'gain' ? 'набор массы' : 'поддержание веса'}
+- Цель: ${profile.goal === "lose" ? "похудение" : profile.goal === "gain" ? "набор массы" : "поддержание веса"}
 
 Используй формулу Миффлина-Сан Жеора и соответствующий коэффициент активности.
 
@@ -498,14 +540,14 @@ export async function calculateNutritionGoals(profile: {
 }`;
 
   const response = await generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    model: "gemini-2.5-flash",
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
-      responseMimeType: 'application/json',
-    }
+      responseMimeType: "application/json",
+    },
   });
 
-  const responseText = response.text || '{}';
+  const responseText = response.text || "{}";
   try {
     const data = JSON.parse(responseText);
     return {
@@ -513,7 +555,7 @@ export async function calculateNutritionGoals(profile: {
       dailyProtein: safeParseFloat(data.dailyProtein, 150),
       dailyFat: safeParseFloat(data.dailyFat, 70),
       dailyCarbs: safeParseFloat(data.dailyCarbs, 200),
-      explanation: String(data.explanation || 'Расчет выполнен успешно.')
+      explanation: String(data.explanation || "Расчет выполнен успешно."),
     };
   } catch {
     return {
@@ -521,7 +563,7 @@ export async function calculateNutritionGoals(profile: {
       dailyProtein: 150,
       dailyFat: 70,
       dailyCarbs: 200,
-      explanation: 'Использованы средние значения по умолчанию.'
+      explanation: "Использованы средние значения по умолчанию.",
     };
   }
 }
@@ -529,8 +571,10 @@ export async function calculateNutritionGoals(profile: {
 /**
  * Извлечь согласие (yes/no) из голосового сообщения
  */
-export async function transcribeYesNo(audioBuffer: Buffer): Promise<'yes' | 'no' | 'unknown'> {
-  const audioBase64 = audioBuffer.toString('base64');
+export async function transcribeYesNo(
+  audioBuffer: Buffer,
+): Promise<"yes" | "no" | "unknown"> {
+  const audioBase64 = audioBuffer.toString("base64");
   const prompt = `Прослушай аудио и определи, выразил ли пользователь согласие ("да", "давай", "yes", "ок") или отказ ("нет", "не надо", "no", "отмена").
 Ответь ТОЛЬКО в формате JSON:
 {
@@ -539,40 +583,42 @@ export async function transcribeYesNo(audioBuffer: Buffer): Promise<'yes' | 'no'
 
   try {
     const response = await generateContent({
-      model: 'gemini-2.5-flash',
+      model: "gemini-2.5-flash",
       contents: [
         {
-          role: 'user',
+          role: "user",
           parts: [
             { text: prompt },
             {
               inlineData: {
-                mimeType: 'audio/ogg',
-                data: audioBase64
-              }
-            }
-          ]
-        }
+                mimeType: "audio/ogg",
+                data: audioBase64,
+              },
+            },
+          ],
+        },
       ],
       config: {
-        responseMimeType: 'application/json',
-      }
+        responseMimeType: "application/json",
+      },
     });
 
-    const data = JSON.parse(response.text || '{}');
-    return data.answer || 'unknown';
+    const data = JSON.parse(response.text || "{}");
+    return data.answer || "unknown";
   } catch (error) {
-    console.error('Error transcribing yes/no from voice:', error);
-    return 'unknown';
+    console.error("Error transcribing yes/no from voice:", error);
+    return "unknown";
   }
 }
 
 /**
  * Извлечь количество граммов из голосового сообщения
  */
-export async function extractGramsFromVoice(audioBuffer: Buffer): Promise<number | null> {
-  const audioBase64 = audioBuffer.toString('base64');
-  const prompt = `Прослушай аудио. Если пользователь четко называет вес еды или порции (число), верни это число (например, "двести грамм" -> 200). 
+export async function extractGramsFromVoice(
+  audioBuffer: Buffer,
+): Promise<number | null> {
+  const audioBase64 = audioBuffer.toString("base64");
+  const prompt = `Прослушай аудио. Если пользователь четко называет вес еды или порции (число), верни это число (например, "двести грамм" -> 200).
 Если пользователь говорит о чем-то другом (например, просит поставить задачу, говорит о расписании, совещаниях или отменяет запрос), верни null. Это нужно, чтобы отличить вес еды от времени или других чисел в случайном разговоре.
 Ответь ТОЛЬКО в формате JSON:
 {
@@ -581,34 +627,34 @@ export async function extractGramsFromVoice(audioBuffer: Buffer): Promise<number
 
   try {
     const response = await generateContent({
-      model: 'gemini-2.5-flash',
+      model: "gemini-2.5-flash",
       contents: [
         {
-          role: 'user',
+          role: "user",
           parts: [
             { text: prompt },
             {
               inlineData: {
-                mimeType: 'audio/ogg',
-                data: audioBase64
-              }
-            }
-          ]
-        }
+                mimeType: "audio/ogg",
+                data: audioBase64,
+              },
+            },
+          ],
+        },
       ],
       config: {
-        responseMimeType: 'application/json',
-      }
+        responseMimeType: "application/json",
+      },
     });
 
-    const data = JSON.parse(response.text || '{}');
+    const data = JSON.parse(response.text || "{}");
     if (data.grams !== undefined && data.grams !== null) {
       const grams = parseFloat(data.grams);
       return isNaN(grams) ? null : grams;
     }
     return null;
   } catch (error) {
-    console.error('Error extracting grams from voice:', error);
+    console.error("Error extracting grams from voice:", error);
     return null;
   }
 }
@@ -650,13 +696,13 @@ export async function generateHistoryResponse(
       endDate?: string;
       searchQuery?: string;
       type: string;
-    }
+    };
   },
   userTimezone: string,
-  currentDatetime: string
+  currentDatetime: string,
 ): Promise<string> {
   const prompt = `Ты — персональный ИИ-ассистент RoutineBot. Твоя задача — красиво, структурированно, понятно и подробно ответить на вопрос пользователя, используя предоставленные данные из его базы данных.
-  
+
 ТЕКУЩИЕ ДАТА И ВРЕМЯ ПОЛЬЗОВАТЕЛЯ: ${currentDatetime}
 ЧАСОВОЙ ПОЯС ПОЛЬЗОВАТЕЛЯ: ${userTimezone}
 
@@ -683,13 +729,12 @@ ${JSON.stringify(data, null, 2)}
 
   try {
     const response = await generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
-    return response.text || 'Не удалось сформировать ответ.';
+    return response.text || "Не удалось сформировать ответ.";
   } catch (error) {
-    console.error('Error generating history response:', error);
-    return 'Произошла ошибка при анализе данных истории. Пожалуйста, попробуйте позже.';
+    console.error("Error generating history response:", error);
+    return "Произошла ошибка при анализе данных истории. Пожалуйста, попробуйте позже.";
   }
 }
-

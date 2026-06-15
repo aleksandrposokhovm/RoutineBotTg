@@ -25,6 +25,7 @@ model User {
   plans           Plan[]
   dietEntries     DietEntry[]
   nutritionProfile NutritionProfile?
+  chatMessages    ChatMessage[]
 }
 
 /// Событие в расписании (жесткая привязка ко времени, хранится в UTC)
@@ -97,6 +98,17 @@ model NutritionProfile {
   dailyCarbs      Float  @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Сообщение в чате для сохранения контекста диалога
+model ChatMessage {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  role      String   // "user" | "model"
+  content   String
+  createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

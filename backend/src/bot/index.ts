@@ -5,11 +5,11 @@ import prisma from '../db';
 import { Plan, ScheduleEvent, DietEntry, User, Prisma } from '../generated/prisma/client';
 import {
   processTextMessage,
-  processVoiceMessage,
+  transcribeAudio,
   analyzePhotoForDiet,
   AIIntent,
   transcribeYesNo,
-  extractGramsFromVoice,
+  extractGramsFromText,
   generateHistoryResponse
 } from '../services/gemini';
 import {
@@ -83,6 +83,138 @@ const ALLOWED_TG_IDS = (process.env.ALLOWED_TG_IDS || '')
   .split(',')
   .map(id => parseInt(id.trim(), 10))
   .filter(id => !isNaN(id));
+
+/**
+ * Хелпер: сохранение сообщений в БД и очистка старых
+ */
+async function saveChatMessage(userId: number, role: 'user' | 'model', content: string) {
+  try {
+    await prisma.chatMessage.create({
+      data: {
+        userId,
+        role,
+        content: content.slice(0, 4000)
+      }
+    });
+
+    const count = await prisma.chatMessage.count({ where: { userId } });
+    if (count > 20) {
+      const oldMessages = await prisma.chatMessage.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'asc' },
+        take: count - 20
+      });
+      const idsToDelete = oldMessages.map(m => m.id);
+      await prisma.chatMessage.deleteMany({
+        where: { id: { in: idsToDelete } }
+      });
+    }
+  } catch (err) {
+    console.error('[saveChatMessage Error]:', err);
+  }
+}
+
+/**
+ * Хелпер: получение истории чата из БД
+ */
+async function getChatHistory(userId: number): Promise<Array<{ role: 'user' | 'model'; parts: [{ text: string }] }>> {
+  try {
+    const messages = await prisma.chatMessage.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'asc' },
+      take: 20
+    });
+    return messages.map(m => ({
+      role: m.role as 'user' | 'model',
+      parts: [{ text: m.content }]
+    }));
+  } catch (err) {
+    console.error('[getChatHistory Error]:', err);
+    return [];
+  }
+}
+
+/**
+ * Хелпер: получение сводного текста текущих записей пользователя
+ */
+async function getUserRecordsSummary(userId: number, timezone: string): Promise<string> {
+  try {
+    const todayStr = getTodayDateInTz(timezone);
+    const tomorrowStr = addDaysToDateStr(todayStr, 1);
+    
+    const plans = await prisma.plan.findMany({
+      where: {
+        userId,
+        OR: [
+          { date: todayStr },
+          { completed: false }
+        ]
+      },
+      orderBy: { date: 'asc' }
+    });
+
+    const startTimeUTC = localTimeToUTC(todayStr, '00:00', timezone);
+    const endTimeUTC = localTimeToUTC(tomorrowStr, '23:59', timezone);
+    const events = await prisma.scheduleEvent.findMany({
+      where: {
+        userId,
+        startTimeUTC: {
+          gte: startTimeUTC,
+          lte: endTimeUTC
+        }
+      },
+      orderBy: { startTimeUTC: 'asc' }
+    });
+
+    const diet = await prisma.dietEntry.findMany({
+      where: {
+        userId,
+        date: todayStr
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    let summary = '';
+    if (plans.length > 0) {
+      summary += 'Планы (To-Do):\n';
+      plans.forEach(p => {
+        summary += `- [ID: ${p.id}] "${p.title}" (дата: ${p.date}, выполнено: ${p.completed ? 'Да' : 'Нет'})\n`;
+      });
+    } else {
+      summary += 'Планы (To-Do): нет задач на сегодня и невыполненных задач.\n';
+    }
+
+    summary += '\n';
+
+    if (events.length > 0) {
+      summary += 'Расписание:\n';
+      events.forEach(e => {
+        const dateStr = utcToLocalDate(e.startTimeUTC, timezone);
+        const startStr = utcToLocalTime(e.startTimeUTC, timezone);
+        const endStr = utcToLocalTime(e.endTimeUTC, timezone);
+        summary += `- [ID: ${e.id}] "${e.title}" (${dateStr} с ${startStr} до ${endStr})\n`;
+      });
+    } else {
+      summary += 'Расписание: нет событий на сегодня и завтра.\n';
+    }
+
+    summary += '\n';
+
+    if (diet.length > 0) {
+      summary += 'Рацион питания (сегодня):\n';
+      diet.forEach(d => {
+        summary += `- [ID: ${d.id}] "${d.name}" (${d.mealType}, ${Math.round(d.calories)} ккал, ${d.portionGrams ? `${d.portionGrams}г` : 'вес не указан'})\n`;
+      });
+    } else {
+      summary += 'Рацион питания: сегодня записей о еде еще нет.\n';
+    }
+
+    return summary;
+  } catch (err) {
+    console.error('[getUserRecordsSummary Error]:', err);
+    return 'Ошибка при загрузке текущих записей.';
+  }
+}
 
 /**
  * Middleware: проверка что пользователь разрешен
@@ -244,30 +376,42 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── УДАЛИТЬ ИЗ РАСПИСАНИЯ ───
     case 'delete_schedule': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название события, которое вы хотите удалить.');
-        return;
+      const targetId = intent.data.targetId;
+      let events: ScheduleEvent[] = [];
+
+      if (targetId) {
+        const ev = await prisma.scheduleEvent.findUnique({ where: { id: targetId } });
+        if (ev && ev.userId === userId) {
+          events = [ev];
+        }
       }
 
-      const allEvents = await prisma.scheduleEvent.findMany({
-        where: { userId }
-      });
+      if (events.length === 0) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название события, которое вы хотите удалить.');
+          return;
+        }
 
-      const dateFilter = intent.data.date;
-      const events = allEvents
-        .filter(e => {
-          const matchQuery = e.title.toLowerCase().includes(query);
-          if (!matchQuery) return false;
-          if (dateFilter) {
-            return utcToLocalDate(e.startTimeUTC, timezone) === dateFilter;
-          }
-          return true;
-        })
-        .slice(0, 5);
+        const allEvents = await prisma.scheduleEvent.findMany({
+          where: { userId }
+        });
+
+        const dateFilter = intent.data.date;
+        events = allEvents
+          .filter(e => {
+            const matchQuery = e.title.toLowerCase().includes(query);
+            if (!matchQuery) return false;
+            if (dateFilter) {
+              return utcToLocalDate(e.startTimeUTC, timezone) === dateFilter;
+            }
+            return true;
+          })
+          .slice(0, 5);
+      }
 
       if (events.length === 0) {
-        await ctx.reply(`❌ Не нашел событий с "${intent.data.searchQuery}" в расписании${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел событий с "${intent.data.searchQuery || ''}" в расписании.`);
         return;
       }
 
@@ -284,30 +428,42 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── УДАЛИТЬ ИЗ ПЛАНА ───
     case 'delete_plan': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите удалить.');
-        return;
+      const targetId = intent.data.targetId;
+      let plans: Plan[] = [];
+
+      if (targetId) {
+        const p = await prisma.plan.findUnique({ where: { id: targetId } });
+        if (p && p.userId === userId) {
+          plans = [p];
+        }
       }
 
-      const allPlans = await prisma.plan.findMany({
-        where: { userId, completed: false }
-      });
+      if (plans.length === 0) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите удалить.');
+          return;
+        }
 
-      const dateFilter = intent.data.date;
-      const plans = allPlans
-        .filter(p => {
-          const matchQuery = p.title.toLowerCase().includes(query);
-          if (!matchQuery) return false;
-          if (dateFilter) {
-            return p.date === dateFilter || p.originalDate === dateFilter;
-          }
-          return true;
-        })
-        .slice(0, 10);
+        const allPlans = await prisma.plan.findMany({
+          where: { userId, completed: false }
+        });
+
+        const dateFilter = intent.data.date;
+        plans = allPlans
+          .filter(p => {
+            const matchQuery = p.title.toLowerCase().includes(query);
+            if (!matchQuery) return false;
+            if (dateFilter) {
+              return p.date === dateFilter || p.originalDate === dateFilter;
+            }
+            return true;
+          })
+          .slice(0, 10);
+      }
 
       if (plans.length === 0) {
-        await ctx.reply(`❌ Не нашел задач с "${intent.data.searchQuery}" в планах${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел задач с "${intent.data.searchQuery || ''}" в планах.`);
         return;
       }
 
@@ -324,30 +480,42 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── УДАЛИТЬ ИЗ РАЦИОНА ───
     case 'delete_diet': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название блюда, которое вы хотите удалить из рациона.');
-        return;
+      const targetId = intent.data.targetId;
+      let entries: DietEntry[] = [];
+
+      if (targetId) {
+        const de = await prisma.dietEntry.findUnique({ where: { id: targetId } });
+        if (de && de.userId === userId) {
+          entries = [de];
+        }
       }
 
-      const allEntries = await prisma.dietEntry.findMany({
-        where: { userId }
-      });
+      if (entries.length === 0) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название блюда, которое вы хотите удалить из рациона.');
+          return;
+        }
 
-      const dateFilter = intent.data.date;
-      const entries = allEntries
-        .filter(e => {
-          const matchQuery = e.name.toLowerCase().includes(query);
-          if (!matchQuery) return false;
-          if (dateFilter) {
-            return e.date === dateFilter;
-          }
-          return true;
-        })
-        .slice(0, 5);
+        const allEntries = await prisma.dietEntry.findMany({
+          where: { userId }
+        });
+
+        const dateFilter = intent.data.date;
+        entries = allEntries
+          .filter(e => {
+            const matchQuery = e.name.toLowerCase().includes(query);
+            if (!matchQuery) return false;
+            if (dateFilter) {
+              return e.date === dateFilter;
+            }
+            return true;
+          })
+          .slice(0, 5);
+      }
 
       if (entries.length === 0) {
-        await ctx.reply(`❌ Не нашел записей с "${intent.data.searchQuery}" в рационе${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел записей с "${intent.data.searchQuery || ''}" в рационе.`);
         return;
       }
 
@@ -364,38 +532,47 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── РЕДАКТИРОВАТЬ РАСПИСАНИЕ ───
     case 'edit_schedule': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название события, которое вы хотите изменить.');
-        return;
+      const targetId = intent.data.targetId;
+      let event: ScheduleEvent | null = null;
+
+      if (targetId) {
+        event = await prisma.scheduleEvent.findUnique({ where: { id: targetId } });
       }
 
-      const allEvents = await prisma.scheduleEvent.findMany({
-        where: { userId }
-      });
-
-      const dateFilter = intent.data.date;
-      const event = allEvents.find(e => {
-        const matchQuery = e.title.toLowerCase().includes(query);
-        if (!matchQuery) return false;
-        if (dateFilter) {
-          return utcToLocalDate(e.startTimeUTC, timezone) === dateFilter;
+      if (!event) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название события, которое вы хотите изменить.');
+          return;
         }
-        return true;
-      });
+
+        const allEvents = await prisma.scheduleEvent.findMany({
+          where: { userId }
+        });
+
+        const dateFilter = intent.data.date;
+        event = allEvents.find(e => {
+          const matchQuery = e.title.toLowerCase().includes(query);
+          if (!matchQuery) return false;
+          if (dateFilter) {
+            return utcToLocalDate(e.startTimeUTC, timezone) === dateFilter;
+          }
+          return true;
+        }) || null;
+      }
 
       if (!event) {
-        await ctx.reply(`❌ Не нашел событие "${intent.data.searchQuery}"${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел событие "${intent.data.searchQuery || ''}".`);
         return;
       }
 
       const newData = intent.data.newData || {};
+      const dateFilter = intent.data.date;
       const targetDate = newData.date || dateFilter || utcToLocalDate(event.startTimeUTC, timezone);
       const newStartStr = newData.startTime || utcToLocalTime(event.startTimeUTC, timezone);
       let newEndStr = newData.endTime;
 
       if (!newEndStr && newData.startTime) {
-        // Вычисляем длительность старого события
         const originalDurationMs = event.endTimeUTC.getTime() - event.startTimeUTC.getTime();
         const newStartUTC = localTimeToUTC(targetDate, newStartStr, timezone);
         const newEndUTC = new Date(newStartUTC.getTime() + originalDurationMs);
@@ -429,28 +606,37 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── РЕДАКТИРОВАТЬ ПЛАН ───
     case 'edit_plan': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите изменить.');
-        return;
+      const targetId = intent.data.targetId;
+      let plan: Plan | null = null;
+
+      if (targetId) {
+        plan = await prisma.plan.findUnique({ where: { id: targetId } });
       }
 
-      const allPlans = await prisma.plan.findMany({
-        where: { userId, completed: false }
-      });
-
-      const dateFilter = intent.data.date;
-      const plan = allPlans.find(p => {
-        const matchQuery = p.title.toLowerCase().includes(query);
-        if (!matchQuery) return false;
-        if (dateFilter) {
-          return p.date === dateFilter || p.originalDate === dateFilter;
+      if (!plan) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите изменить.');
+          return;
         }
-        return true;
-      });
+
+        const allPlans = await prisma.plan.findMany({
+          where: { userId, completed: false }
+        });
+
+        const dateFilter = intent.data.date;
+        plan = allPlans.find(p => {
+          const matchQuery = p.title.toLowerCase().includes(query);
+          if (!matchQuery) return false;
+          if (dateFilter) {
+            return p.date === dateFilter || p.originalDate === dateFilter;
+          }
+          return true;
+        }) || null;
+      }
 
       if (!plan) {
-        await ctx.reply(`❌ Не нашел невыполненную задачу "${intent.data.searchQuery}"${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел невыполненную задачу "${intent.data.searchQuery || ''}".`);
         return;
       }
 
@@ -475,28 +661,37 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── РЕДАКТИРОВАТЬ РАЦИОН ───
     case 'edit_diet': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название блюда, которое вы хотите изменить.');
-        return;
+      const targetId = intent.data.targetId;
+      let entry: DietEntry | null = null;
+
+      if (targetId) {
+        entry = await prisma.dietEntry.findUnique({ where: { id: targetId } });
       }
 
-      const allEntries = await prisma.dietEntry.findMany({
-        where: { userId }
-      });
-
-      const dateFilter = intent.data.date;
-      const entry = allEntries.find(e => {
-        const matchQuery = e.name.toLowerCase().includes(query);
-        if (!matchQuery) return false;
-        if (dateFilter) {
-          return e.date === dateFilter;
+      if (!entry) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название блюда, которое вы хотите изменить.');
+          return;
         }
-        return true;
-      });
+
+        const allEntries = await prisma.dietEntry.findMany({
+          where: { userId }
+        });
+
+        const dateFilter = intent.data.date;
+        entry = allEntries.find(e => {
+          const matchQuery = e.name.toLowerCase().includes(query);
+          if (!matchQuery) return false;
+          if (dateFilter) {
+            return e.date === dateFilter;
+          }
+          return true;
+        }) || null;
+      }
 
       if (!entry) {
-        await ctx.reply(`❌ Не нашел блюдо "${intent.data.searchQuery}"${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел блюдо "${intent.data.searchQuery || ''}".`);
         return;
       }
 
@@ -522,28 +717,37 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── ОТМЕТИТЬ ПЛАН ВЫПОЛНЕННЫМ ───
     case 'complete_plan': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите отметить выполненной.');
-        return;
+      const targetId = intent.data.targetId;
+      let plan: Plan | null = null;
+
+      if (targetId) {
+        plan = await prisma.plan.findUnique({ where: { id: targetId } });
       }
 
-      const allPlans = await prisma.plan.findMany({
-        where: { userId, completed: false }
-      });
-
-      const dateFilter = intent.data.date;
-      const plan = allPlans.find(p => {
-        const matchQuery = p.title.toLowerCase().includes(query);
-        if (!matchQuery) return false;
-        if (dateFilter) {
-          return p.date === dateFilter || p.originalDate === dateFilter;
+      if (!plan) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите отметить выполненной.');
+          return;
         }
-        return true;
-      });
+
+        const allPlans = await prisma.plan.findMany({
+          where: { userId, completed: false }
+        });
+
+        const dateFilter = intent.data.date;
+        plan = allPlans.find(p => {
+          const matchQuery = p.title.toLowerCase().includes(query);
+          if (!matchQuery) return false;
+          if (dateFilter) {
+            return p.date === dateFilter || p.originalDate === dateFilter;
+          }
+          return true;
+        }) || null;
+      }
 
       if (!plan) {
-        await ctx.reply(`❌ Не нашел невыполненную задачу "${intent.data.searchQuery}"${dateFilter ? ` на дату ${dateFilter}` : ''}.`);
+        await ctx.reply(`❌ Не нашел невыполненную задачу "${intent.data.searchQuery || ''}".`);
         return;
       }
 
@@ -572,20 +776,29 @@ async function handleAIIntent(ctx: Context, intent: AIIntent, user: User) {
 
     // ─── ПЕРЕНЕСТИ ЗАДАЧУ ───
     case 'postpone_plan': {
-      const query = (intent.data.searchQuery || '').trim().toLowerCase();
-      if (!query) {
-        await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите перенести.');
-        return;
+      const targetId = intent.data.targetId;
+      let plan: Plan | null = null;
+
+      if (targetId) {
+        plan = await prisma.plan.findUnique({ where: { id: targetId } });
       }
 
-      const allPlans = await prisma.plan.findMany({
-        where: { userId, completed: false }
-      });
+      if (!plan) {
+        const query = (intent.data.searchQuery || '').trim().toLowerCase();
+        if (!query) {
+          await ctx.reply('❌ Пожалуйста, уточните название задачи, которую вы хотите перенести.');
+          return;
+        }
 
-      const plan = allPlans.find(p => p.title.toLowerCase().includes(query));
+        const allPlans = await prisma.plan.findMany({
+          where: { userId, completed: false }
+        });
+
+        plan = allPlans.find(p => p.title.toLowerCase().includes(query)) || null;
+      }
 
       if (!plan) {
-        await ctx.reply(`❌ Не нашел невыполненную задачу "${intent.data.searchQuery}".`);
+        await ctx.reply(`❌ Не нашел невыполненную задачу "${intent.data.searchQuery || ''}".`);
         return;
       }
 
@@ -946,12 +1159,11 @@ export function createBot(): Telegraf {
       if (Date.now() >= pending.expiresAt) {
         pendingDeletions.delete(tgId);
       } else {
-        const answer = text.toLowerCase().trim();
+        const answer = await transcribeYesNo(text);
 
-        if (answer === 'да' || answer === 'yes') {
+        if (answer === 'yes') {
           pendingDeletions.delete(tgId);
 
-          // Выполняем удаление
           if (pending.action === 'delete_schedule') {
             const dbUser = await ensureUser(tgId);
             const eventsToDelete = await prisma.scheduleEvent.findMany({
@@ -972,7 +1184,7 @@ export function createBot(): Telegraf {
             await ctx.reply(`✅ Удалено ${pending.data.ids.length} записей о питании.`);
           }
           return;
-        } else if (answer === 'нет' || answer === 'no') {
+        } else if (answer === 'no') {
           pendingDeletions.delete(tgId);
           await ctx.reply('👌 Хорошо, ничего не удаляю.');
           return;
@@ -988,9 +1200,9 @@ export function createBot(): Telegraf {
       if (Date.now() >= pendingEdit.expiresAt) {
         pendingEdits.delete(tgId);
       } else {
-        const answer = text.toLowerCase().trim();
+        const answer = await transcribeYesNo(text);
 
-        if (answer === 'да' || answer === 'yes') {
+        if (answer === 'yes') {
           pendingEdits.delete(tgId);
           const user = await ensureUser(tgId);
 
@@ -1020,7 +1232,6 @@ export function createBot(): Telegraf {
               }
             });
 
-            // Синхронизация с Google Календарем
             if (updatedEvent.googleEventId) {
               await updateGoogleCalendarEvent(user.id, updatedEvent.googleEventId, {
                 title: updatedEvent.title,
@@ -1070,7 +1281,7 @@ export function createBot(): Telegraf {
             await ctx.reply(`✅ Запись о питании успешно изменена.`);
           }
           return;
-        } else if (answer === 'нет' || answer === 'no') {
+        } else if (answer === 'no') {
           pendingEdits.delete(tgId);
           await ctx.reply('👌 Хорошо, отменяю изменения.');
           return;
@@ -1086,49 +1297,49 @@ export function createBot(): Telegraf {
       if (Date.now() >= pendingPortion.expiresAt) {
         pendingPortions.delete(tgId);
       } else {
-        // eslint-disable-next-line security/detect-unsafe-regex
         const match = text.trim().match(/^(\d+(?:\.\d+)?)\s*(?:г|грамм|g|gram)?$/i);
-        if (match) {
-          const grams = parseFloat(match[1]);
-          if (grams > 0) {
-            pendingPortions.delete(tgId);
+        const grams = match
+          ? parseFloat(match[1])
+          : await extractGramsFromText(text);
 
-            const user = await ensureUser(tgId);
-            const targetDate = getTodayDateInTz(user.timezone);
+        if (grams && grams > 0) {
+          pendingPortions.delete(tgId);
 
-            // Пересчитываем КБЖУ пропорционально порции
-            const dietData = pendingPortion.dietData;
-            const calories = dietData.calories || 0;
-            const protein = dietData.protein || 0;
-            const fat = dietData.fat || 0;
-            const carbs = dietData.carbs || 0;
-            const scaleFactor = grams / (dietData.portionGrams || 100);
+          const user = await ensureUser(tgId);
+          const targetDate = getTodayDateInTz(user.timezone);
 
-            await prisma.dietEntry.create({
-              data: {
-                userId: user.id,
-                name: dietData.name || 'Неизвестное блюдо',
-                mealType: dietData.mealType || 'snack',
-                date: targetDate,
-                calories: Math.round(calories * scaleFactor),
-                protein: Math.round(protein * scaleFactor * 10) / 10,
-                fat: Math.round(fat * scaleFactor * 10) / 10,
-                carbs: Math.round(carbs * scaleFactor * 10) / 10,
-                portionGrams: grams,
-                photoFileId: dietData.photoFileId || null
-              }
-            });
+          const dietData = pendingPortion.dietData;
+          const calories = dietData.calories || 0;
+          const protein = dietData.protein || 0;
+          const fat = dietData.fat || 0;
+          const carbs = dietData.carbs || 0;
+          const scaleFactor = grams / (dietData.portionGrams || 100);
 
-            await ctx.reply(
-              `✅ Записано в рацион!\n\n` +
-              `🍽 ${dietData.name || 'Неизвестное блюдо'}\n` +
-              `⚖️ Порция: ${grams}г\n` +
-              `📊 ${Math.round(calories * scaleFactor)} ккал | Б: ${Math.round(protein * scaleFactor)}г | Ж: ${Math.round(fat * scaleFactor)}г | У: ${Math.round(carbs * scaleFactor)}г`
-            );
-            return;
-          }
+          await prisma.dietEntry.create({
+            data: {
+              userId: user.id,
+              name: dietData.name || 'Неизвестное блюдо',
+              mealType: dietData.mealType || 'snack',
+              date: targetDate,
+              calories: Math.round(calories * scaleFactor),
+              protein: Math.round(protein * scaleFactor * 10) / 10,
+              fat: Math.round(fat * scaleFactor * 10) / 10,
+              carbs: Math.round(carbs * scaleFactor * 10) / 10,
+              portionGrams: grams,
+              photoFileId: dietData.photoFileId || null
+            }
+          });
+
+          await ctx.reply(
+            `✅ Записано в рацион!\n\n` +
+            `🍽 ${dietData.name || 'Неизвестное блюдо'}\n` +
+            `⚖️ Порция: ${grams}г\n` +
+            `📊 ${Math.round(calories * scaleFactor)} ккал | Б: ${Math.round(protein * scaleFactor)}г | Ж: ${Math.round(fat * scaleFactor)}г | У: ${Math.round(carbs * scaleFactor)}г`
+          );
+          return;
+        } else {
+          pendingPortions.delete(tgId);
         }
-        pendingPortions.delete(tgId);
       }
     }
 
@@ -1139,7 +1350,21 @@ export function createBot(): Telegraf {
     await ctx.sendChatAction('typing');
 
     try {
-      const intent = await processTextMessage(text, user.timezone, currentDatetime);
+      await saveChatMessage(user.id, 'user', text);
+      const history = await getChatHistory(user.id);
+      const summary = await getUserRecordsSummary(user.id, user.timezone);
+
+      const intent = await processTextMessage(text, user.timezone, currentDatetime, summary, history);
+
+      // Перехватываем reply, чтобы залогировать в историю чата
+      const originalReply = ctx.reply.bind(ctx);
+      ctx.reply = async (replyText: any, extra?: any) => {
+        if (typeof replyText === 'string') {
+          await saveChatMessage(user.id, 'model', replyText);
+        }
+        return originalReply(replyText, extra);
+      };
+
       await handleAIIntent(ctx, intent, user);
     } catch (error) {
       console.error('Error processing text:', error);
@@ -1147,7 +1372,6 @@ export function createBot(): Telegraf {
     }
   });
 
-  // ─── Обработка голосовых сообщений ───
   bot.on(message('voice'), async (ctx) => {
     const tgId = ctx.from.id;
     const user = await ensureUser(tgId, ctx.from.first_name, ctx.from.last_name);
@@ -1156,20 +1380,26 @@ export function createBot(): Telegraf {
     await ctx.sendChatAction('typing');
 
     try {
-      // Скачиваем аудиофайл
       const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
       const response = await fetch(fileLink.toString());
       const audioBuffer = Buffer.from(await response.arrayBuffer());
 
-      // 1. Проверяем, не ожидаем ли подтверждения удаления
+      const transcription = await transcribeAudio(audioBuffer);
+      if (!transcription) {
+        await ctx.reply('❌ Не удалось распознать голосовое сообщение. Попробуйте сказать четче.');
+        return;
+      }
+
+      // 1. Check pending deletions
       const pending = pendingDeletions.get(tgId);
       if (pending) {
         if (Date.now() >= pending.expiresAt) {
           pendingDeletions.delete(tgId);
         } else {
-          const answer = await transcribeYesNo(audioBuffer);
+          const answer = await transcribeYesNo(transcription);
           if (answer === 'yes') {
             pendingDeletions.delete(tgId);
+
             if (pending.action === 'delete_schedule') {
               const dbUser = await ensureUser(tgId);
               const eventsToDelete = await prisma.scheduleEvent.findMany({
@@ -1200,13 +1430,13 @@ export function createBot(): Telegraf {
         }
       }
 
-      // 2. Проверяем, не ожидаем ли подтверждения редактирования
+      // 2. Check pending edits
       const pendingEdit = pendingEdits.get(tgId);
       if (pendingEdit) {
         if (Date.now() >= pendingEdit.expiresAt) {
           pendingEdits.delete(tgId);
         } else {
-          const answer = await transcribeYesNo(audioBuffer);
+          const answer = await transcribeYesNo(transcription);
           if (answer === 'yes') {
             pendingEdits.delete(tgId);
             const user = await ensureUser(tgId);
@@ -1216,6 +1446,7 @@ export function createBot(): Telegraf {
               const targetDate = pendingEdit.newData.targetDate || getTodayDateInTz(user.timezone);
               const startTime = pendingEdit.newData.startTime || '00:00';
               const endTime = pendingEdit.newData.endTime || '00:00';
+
               const startTimeUTC = localTimeToUTC(targetDate, startTime, user.timezone);
               const endTimeUTC = localTimeToUTC(targetDate, endTime, user.timezone);
 
@@ -1227,16 +1458,9 @@ export function createBot(): Telegraf {
 
               const updatedEvent = await prisma.scheduleEvent.update({
                 where: { id: pendingEdit.item.id },
-                data: { 
-                  title, 
-                  startTimeUTC, 
-                  endTimeUTC,
-                  reminded150,
-                  reminded60
-                }
+                data: { title, startTimeUTC, endTimeUTC, reminded150, reminded60 }
               });
 
-              // Синхронизация с Google Календарем
               if (updatedEvent.googleEventId) {
                 await updateGoogleCalendarEvent(user.id, updatedEvent.googleEventId, {
                   title: updatedEvent.title,
@@ -1258,7 +1482,6 @@ export function createBot(): Telegraf {
                   });
                 }
               }
-
               await ctx.reply(`✅ Событие успешно изменено.`);
             } else if (pendingEdit.action === 'edit_plan') {
               await prisma.plan.update({
@@ -1296,15 +1519,23 @@ export function createBot(): Telegraf {
         }
       }
 
-      // 2. Проверяем, не ожидаем ли размера порции
+      // 3. Check pending portions
       const pendingPortion = pendingPortions.get(tgId);
       if (pendingPortion) {
         if (Date.now() >= pendingPortion.expiresAt) {
           pendingPortions.delete(tgId);
         } else {
-          const grams = await extractGramsFromVoice(audioBuffer);
+          let grams: number | null = null;
+          const match = transcription.trim().match(/^(\d+(?:\.\d+)?)\s*(?:г|грамм|g|gram)?$/i);
+          if (match) {
+            grams = parseFloat(match[1]);
+          } else {
+            grams = await extractGramsFromText(transcription);
+          }
+
           if (grams && grams > 0) {
             pendingPortions.delete(tgId);
+
             const targetDate = getTodayDateInTz(user.timezone);
             const dietData = pendingPortion.dietData;
             const calories = dietData.calories || 0;
@@ -1341,7 +1572,22 @@ export function createBot(): Telegraf {
         }
       }
 
-      const intent = await processVoiceMessage(audioBuffer, user.timezone, currentDatetime);
+      // 4. Default processing
+      await saveChatMessage(user.id, 'user', transcription);
+      const history = await getChatHistory(user.id);
+      const summary = await getUserRecordsSummary(user.id, user.timezone);
+
+      const intent = await processTextMessage(transcription, user.timezone, currentDatetime, summary, history);
+
+      // Перехватываем reply, чтобы залогировать в историю чата
+      const originalReply = ctx.reply.bind(ctx);
+      ctx.reply = async (replyText: any, extra?: any) => {
+        if (typeof replyText === 'string') {
+          await saveChatMessage(user.id, 'model', replyText);
+        }
+        return originalReply(replyText, extra);
+      };
+
       await handleAIIntent(ctx, intent, user);
     } catch (error) {
       console.error('Error processing voice:', error);
@@ -1349,7 +1595,6 @@ export function createBot(): Telegraf {
     }
   });
 
-  // ─── Обработка фото (рацион) ───
   bot.on(message('photo'), async (ctx) => {
     const user = await ensureUser(ctx.from.id, ctx.from.first_name, ctx.from.last_name);
     const currentDatetime = getCurrentDatetimeInTz(user.timezone);

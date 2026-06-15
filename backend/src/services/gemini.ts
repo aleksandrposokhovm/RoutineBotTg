@@ -119,6 +119,7 @@ export interface AIIntent {
     | "get_history"
     | "unknown";
   data: {
+    targetId?: number | null;
     title?: string;
     description?: string | null;
     date?: string;
@@ -191,6 +192,9 @@ const SYSTEM_PROMPT = `Ты — персональный ИИ-ассистент
 ТЕКУЩИЕ ДАТА И ВРЕМЯ ПОЛЬЗОВАТЕЛЯ: {CURRENT_DATETIME}
 ЧАСОВОЙ ПОЯС ПОЛЬЗОВАТЕЛЯ: {USER_TIMEZONE}
 
+СПИСОК СУЩЕСТВУЮЩИХ ЗАПИСЕЙ ПОЛЬЗОВАТЕЛЯ (для редактирования, удаления или переноса):
+{USER_CURRENT_RECORDS}
+
 Твои задачи:
 1. РАСПИСАНИЕ — события с жесткой привязкой ко времени (совещания, звонки, встречи). Время ВСЕГДА указывается в часовом поясе пользователя.
 2. ПЛАНЫ — задачи на день без привязки ко времени (To-Do лист).
@@ -200,12 +204,15 @@ const SYSTEM_PROMPT = `Ты — персональный ИИ-ассистент
 - Всегда отвечай ТОЛЬКО валидным JSON (без markdown, без комментариев).
 - ВАЖНО: Все ответы, сообщения и текстовые значения в полях JSON (такие как confirmationMessage, названия событий, описания, задачи, названия блюд и т.д.) должны быть СТРОГО на русском языке. Думай и пиши исключительно на русском.
 - ВАЖНО: Если пользователь просит добавить событие/план на будущее (например, "завтра", "через неделю", "через месяц", "в следующую пятницу"), ВНИМАТЕЛЬНО вычисляй правильную дату (поле date в формате YYYY-MM-DD) относительно ТЕКУЩИЕ ДАТА И ВРЕМЯ. Бот умеет и должен работать с будущими датами.
+- ВАЖНО ДЛЯ ДЕЙСТВИЙ РЕДАКТИРОВАНИЯ (edit_*), УДАЛЕНИЯ (delete_*), ЗАВЕРШЕНИЯ (complete_plan) И ПЕРЕНОСА (postpone_plan):
+  Сначала найди соответствующую запись в СПИСКЕ СУЩЕСТВУЮЩИХ ЗАПИСЕЙ ПОЛЬЗОВАТЕЛЯ по смыслу и ключевым словам (учитывая синонимы, контекст разговора и т.д.).
+  Если ты нашел запись, ОБЯЗАТЕЛЬНО укажи её ID в поле "targetId" в объекте "data". Также ты можешь заполнить "searchQuery" на случай, если ID не найдено. Если подходящей записи нет, укажи в поле "targetId" значение null.
 - Формат ответа:
 {
   "action": "add_schedule" | "add_plan" | "add_diet" | "delete_schedule" | "delete_plan" | "delete_diet" | "complete_plan" | "postpone_plan" | "update_timezone" | "edit_schedule" | "edit_plan" | "edit_diet" | "get_history" | "unknown",
   "data": { ... зависит от действия ... },
   "confirmationMessage": "Краткое сообщение пользователю о том, что было сделано (или ответ на его вопрос, если action является unknown)",
-  "userQueryText": "Текстовая расшифровка голосового сообщения (если аудио) или точный/очищенный текст запроса пользователя (если текст)"
+  "userQueryText": "Точный/очищенный текст запроса пользователя (если текст)"
 }
 
 ФОРМАТ DATA ПО ДЕЙСТВИЯМ:
@@ -244,24 +251,27 @@ add_diet:
 
 delete_schedule / delete_plan / delete_diet:
 {
-  "searchQuery": "текст для поиска записи, которую нужно удалить",
+  "targetId": ID_записи_или_null,
+  "searchQuery": "текст для поиска записи, которую нужно удалить (на всякий случай)",
   "date": "YYYY-MM-DD" (опционально)
 }
 
 edit_schedule:
 {
-  "searchQuery": "текст для поиска записи (например, 'созвон' или 'тренировка')",
+  "targetId": ID_записи_или_null,
+  "searchQuery": "текст для поиска записи (на всякий случай)",
   "date": "YYYY-MM-DD" (опционально),
   "newData": {
     "title": "Новое название (опционально)",
-    "startTime": "Новое время начала HH:MM (опционально)",
-    "endTime": "Новое время конца HH:MM (опционально)"
+    "startTime": "Новое время HH:MM (опционально)",
+    "endTime": "Новое время HH:MM (опционально)"
   }
 }
 
 edit_plan:
 {
-  "searchQuery": "текст для поиска задачи",
+  "targetId": ID_записи_или_null,
+  "searchQuery": "текст для поиска задачи (на всякий случай)",
   "date": "YYYY-MM-DD" (опционально),
   "newData": {
     "title": "Новое название (опционально)",
@@ -271,7 +281,8 @@ edit_plan:
 
 edit_diet:
 {
-  "searchQuery": "текст для поиска блюда",
+  "targetId": ID_записи_или_null,
+  "searchQuery": "текст для поиска блюда (на всякий случай)",
   "date": "YYYY-MM-DD" (опционально),
   "newData": {
     "name": "Новое название блюда (опционально)",
@@ -285,13 +296,15 @@ edit_diet:
 
 complete_plan:
 {
-  "searchQuery": "текст для поиска задачи",
+  "targetId": ID_записи_или_null,
+  "searchQuery": "текст для поиска задачи (на всякий случай)",
   "date": "YYYY-MM-DD" (опционально)
 }
 
 postpone_plan:
 {
-  "searchQuery": "текст для поиска задачи",
+  "targetId": ID_записи_или_null,
+  "searchQuery": "текст для поиска задачи (на всякий случай)",
   "targetDate": "YYYY-MM-DD"
 }
 
@@ -333,27 +346,37 @@ unknown:
 // ────────────────────────────────────────
 
 /**
- * Обработка текстового сообщения — определение намерения пользователя
+ * Обработка текстового сообщения — определение намерения пользователя с учетом контекста истории и текущих записей
  */
 export async function processTextMessage(
   text: string,
   userTimezone: string,
   currentDatetime: string,
+  currentRecordsText: string,
+  history: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }> = [],
 ): Promise<AIIntent> {
   const prompt = SYSTEM_PROMPT.replace(
     "{CURRENT_DATETIME}",
     currentDatetime,
-  ).replace("{USER_TIMEZONE}", userTimezone);
+  ).replace(
+    "{USER_TIMEZONE}",
+    userTimezone,
+  ).replace(
+    "{USER_CURRENT_RECORDS}",
+    currentRecordsText || "Нет текущих записей.",
+  );
 
   const response = await generateContent({
     model: "gemini-2.5-flash",
     contents: [
+      ...history,
       {
         role: "user",
-        parts: [{ text: `${prompt}\n\nСообщение пользователя:\n${text}` }],
+        parts: [{ text: text }],
       },
     ],
     config: {
+      systemInstruction: prompt,
       responseMimeType: "application/json",
     },
   });
@@ -372,53 +395,32 @@ export async function processTextMessage(
 }
 
 /**
- * Обработка голосового сообщения — Gemini напрямую принимает аудио
+ * Преобразование голосового сообщения в текст
  */
-export async function processVoiceMessage(
-  audioBuffer: Buffer,
-  userTimezone: string,
-  currentDatetime: string,
-): Promise<AIIntent> {
-  const prompt = SYSTEM_PROMPT.replace(
-    "{CURRENT_DATETIME}",
-    currentDatetime,
-  ).replace("{USER_TIMEZONE}", userTimezone);
-
+export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
   const audioBase64 = audioBuffer.toString("base64");
-
-  const response = await generateContent({
-    model: "gemini-2.5-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text: `${prompt}\n\nПользователь отправил голосовое сообщение. Расшифруй его и определи намерение:`,
-          },
-          {
-            inlineData: {
-              mimeType: "audio/ogg",
-              data: audioBase64,
-            },
-          },
-        ],
-      },
-    ],
-    config: {
-      responseMimeType: "application/json",
-    },
-  });
-
-  const responseText = response.text || "{}";
   try {
-    return JSON.parse(responseText) as AIIntent;
-  } catch {
-    return {
-      action: "unknown",
-      data: {},
-      confirmationMessage:
-        "Не удалось обработать голосовое сообщение. Попробуйте ещё раз.",
-    };
+    const response = await generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: "Распознай речь из аудиофайла и запиши её текстом на русском языке. Не добавляй никаких своих комментариев, приветствий или знаков препинания, если они не озвучены. Верни только распознанный текст." },
+            {
+              inlineData: {
+                mimeType: "audio/ogg",
+                data: audioBase64,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    return response.text?.trim() || "";
+  } catch (error) {
+    console.error("Error in transcribeAudio:", error);
+    return "";
   }
 }
 
@@ -480,7 +482,7 @@ ${caption ? `Пользователь также написал подпись: 
   try {
     const data = JSON.parse(responseText);
     return {
-      name: String(data.name || caption || "Неизвестное блюдо"),
+      name: String(data.name || caption || "Неизвестное блюду"),
       mealType: (["breakfast", "lunch", "dinner", "snack"].includes(
         data.mealType,
       )
@@ -572,13 +574,14 @@ export async function calculateNutritionGoals(profile: {
 }
 
 /**
- * Извлечь согласие (yes/no) из голосового сообщения
+ * Извлечь согласие (yes/no) из текстового сообщения
  */
 export async function transcribeYesNo(
-  audioBuffer: Buffer,
+  text: string,
 ): Promise<"yes" | "no" | "unknown"> {
-  const audioBase64 = audioBuffer.toString("base64");
-  const prompt = `Прослушай аудио и определи, выразил ли пользователь согласие ("да", "давай", "yes", "ок") или отказ ("нет", "не надо", "no", "отмена").
+  const prompt = `Проанализируй текст ответа пользователя и определи, выразил ли он согласие ("да", "давай", "yes", "ок") или отказ ("нет", "не надо", "no", "отмена").
+Текст пользователя: "${text}"
+
 Ответь ТОЛЬКО в формате JSON:
 {
   "answer": "yes" | "no" | "unknown"
@@ -592,12 +595,6 @@ export async function transcribeYesNo(
           role: "user",
           parts: [
             { text: prompt },
-            {
-              inlineData: {
-                mimeType: "audio/ogg",
-                data: audioBase64,
-              },
-            },
           ],
         },
       ],
@@ -609,7 +606,7 @@ export async function transcribeYesNo(
     const data = JSON.parse(response.text || "{}");
     return data.answer || "unknown";
   } catch (error) {
-    console.error("Error transcribing yes/no from voice:", error);
+    console.error("Error transcribing yes/no from text:", error);
     return "unknown";
   }
 }
@@ -617,12 +614,13 @@ export async function transcribeYesNo(
 /**
  * Извлечь количество граммов из голосового сообщения
  */
-export async function extractGramsFromVoice(
-  audioBuffer: Buffer,
+export async function extractGramsFromText(
+  text: string,
 ): Promise<number | null> {
-  const audioBase64 = audioBuffer.toString("base64");
-  const prompt = `Прослушай аудио. Если пользователь четко называет вес еды или порции (число), верни это число (например, "двести грамм" -> 200).
-Если пользователь говорит о чем-то другом (например, просит поставить задачу, говорит о расписании, совещаниях или отменяет запрос), верни null. Это нужно, чтобы отличить вес еды от времени или других чисел в случайном разговоре.
+  const prompt = `Проанализируй текст. Если пользователь четко называет вес еды или порции (число), верни это число (например, "двести грамм" -> 200, "250" -> 250).
+Если пользователь говорит о чем-то другом, верни null.
+Текст пользователя: "${text}"
+
 Ответь ТОЛЬКО в формате JSON:
 {
   "grams": число или null
@@ -634,15 +632,7 @@ export async function extractGramsFromVoice(
       contents: [
         {
           role: "user",
-          parts: [
-            { text: prompt },
-            {
-              inlineData: {
-                mimeType: "audio/ogg",
-                data: audioBase64,
-              },
-            },
-          ],
+          parts: [{ text: prompt }],
         },
       ],
       config: {
@@ -657,7 +647,7 @@ export async function extractGramsFromVoice(
     }
     return null;
   } catch (error) {
-    console.error("Error extracting grams from voice:", error);
+    console.error("Error extracting grams from text:", error);
     return null;
   }
 }

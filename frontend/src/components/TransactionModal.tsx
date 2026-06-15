@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { ExpenseCategory } from '../api';
+import type { ExpenseCategory, FinanceTransaction } from '../api';
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -13,6 +13,7 @@ interface TransactionModalProps {
   }) => void;
   type: 'income' | 'expense';
   category?: ExpenseCategory | null;
+  transactionToEdit?: FinanceTransaction | null;
 }
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
@@ -20,7 +21,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   onClose,
   onSave,
   type,
-  category
+  category,
+  transactionToEdit
 }) => {
   const [amountStr, setAmountStr] = useState('');
   const [comment, setComment] = useState('');
@@ -28,17 +30,23 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setAmountStr('');
-      setComment('');
-      
-      // Инициализация даты сегодняшним днем в формате YYYY-MM-DD
-      const localToday = new Date();
-      const offset = localToday.getTimezoneOffset();
-      const adjustedDate = new Date(localToday.getTime() - (offset * 60 * 1000));
-      const formattedDate = adjustedDate.toISOString().split('T')[0];
-      setDate(formattedDate);
+      if (transactionToEdit) {
+        setAmountStr(String(transactionToEdit.amount));
+        setComment(transactionToEdit.comment || '');
+        setDate(transactionToEdit.date);
+      } else {
+        setAmountStr('');
+        setComment('');
+        
+        // Инициализация даты сегодняшним днем в формате YYYY-MM-DD
+        const localToday = new Date();
+        const offset = localToday.getTimezoneOffset();
+        const adjustedDate = new Date(localToday.getTime() - (offset * 60 * 1000));
+        const formattedDate = adjustedDate.toISOString().split('T')[0];
+        setDate(formattedDate);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, transactionToEdit]);
 
   if (!isOpen) return null;
 
@@ -56,23 +64,27 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     if (isNaN(amount) || amount <= 0) return;
 
     onSave({
-      type,
+      type: transactionToEdit ? transactionToEdit.type : type,
       amount,
       comment: comment.trim(),
       date,
-      categoryId: category?.id
+      categoryId: transactionToEdit ? (transactionToEdit.categoryId || undefined) : category?.id
     });
     onClose();
   };
+
+  const currentType = transactionToEdit ? transactionToEdit.type : type;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: '340px' }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-icon" style={{ fontSize: '32px', marginBottom: '8px' }}>
-          {type === 'income' ? '💰' : category?.icon || '💸'}
+          {currentType === 'income' ? '💰' : (transactionToEdit?.category?.icon || category?.icon || '💸')}
         </div>
         <div className="modal-title">
-          {type === 'income' ? 'Пополнение баланса' : `Расход: ${category?.name}`}
+          {transactionToEdit
+            ? `Изменить ${currentType === 'income' ? 'доход' : 'расход'}`
+            : (type === 'income' ? 'Пополнение баланса' : `Расход: ${category?.name}`)}
         </div>
 
         <form onSubmit={handleSubmit} style={{ marginTop: '16px' }}>
@@ -97,7 +109,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               id="tx-comment"
               type="text"
               className="finance-input"
-              placeholder={type === 'income' ? 'Источник дохода' : 'На что потрачено'}
+              placeholder={currentType === 'income' ? 'Источник дохода' : 'На что потрачено'}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               maxLength={50}
@@ -131,11 +143,11 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               style={{
                 backgroundColor: (!amountStr || parseFloat(amountStr) <= 0) 
                   ? 'var(--text-disabled)' 
-                  : (type === 'income' ? 'var(--color-success)' : 'var(--color-graphite)'),
+                  : (currentType === 'income' ? 'var(--color-success)' : 'var(--color-graphite)'),
                 color: 'white'
               }}
             >
-              Добавить
+              {transactionToEdit ? 'Сохранить' : 'Добавить'}
             </button>
           </div>
         </form>

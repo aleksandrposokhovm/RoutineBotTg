@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { financeApi } from '../api';
 import type { 
   FinanceAccount, 
   ExpenseCategory, 
-  FinanceStats 
+  FinanceStats,
+  FinanceTransaction 
 } from '../api';
 import { AddCategoryModal } from '../components/AddCategoryModal';
 import { TransactionModal } from '../components/TransactionModal';
@@ -30,14 +31,15 @@ export function FinancePage() {
     return `${y}-${m}`;
   });
 
+  // Вкладка: 'expenses' (расходы) | 'incomes' (доходы)
+  const [activeSection, setActiveSection] = useState<'expenses' | 'incomes'>('expenses');
+
   // Состояние данных
   const [account, setAccount] = useState<FinanceAccount | null>(null);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
   const [stats, setStats] = useState<FinanceStats>({ income: 0, expense: 0 });
   const [loading, setLoading] = useState(true);
-
-  // Режим распределения средств (когда нажали на баланс и выбираем категорию)
-  const [isDistributing, setIsDistributing] = useState(false);
 
   // Состояние модалок
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
@@ -46,29 +48,31 @@ export function FinancePage() {
   const [isTransactionOpen, setIsTransactionOpen] = useState(false);
   const [transactionType, setTransactionType] = useState<'income' | 'expense'>('income');
   const [selectedCategoryForTx, setSelectedCategoryForTx] = useState<ExpenseCategory | null>(null);
+  const [transactionToEdit, setTransactionToEdit] = useState<FinanceTransaction | null>(null);
 
-  // Состояние детального просмотра
+  // Состояние детального просмотра категории
   const [selectedCategoryDetail, setSelectedCategoryDetail] = useState<ExpenseCategory | null>(null);
-
-  // Реф на центральный круг баланса для вычисления координат полета
-  const balanceRef = useRef<HTMLDivElement | null>(null);
 
   // Загрузка данных
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       
-      // 1. Получаем счета (если счетов нет, бэкенд создаст "Кошелек")
+      // 1. Получаем счета
       const accountsList = await financeApi.getAccounts();
       if (accountsList.length > 0) {
         setAccount(accountsList[0]);
       }
 
-      // 2. Получаем категории с расходами за выбранный месяц
+      // 2. Получаем категории с расходами за месяц
       const categoriesList = await financeApi.getCategories(currentMonth);
       setCategories(categoriesList);
 
-      // 3. Получаем общую статистику за месяц
+      // 3. Получаем все транзакции за месяц (для списка доходов)
+      const transactionsList = await financeApi.getTransactions(currentMonth);
+      setTransactions(transactionsList);
+
+      // 4. Получаем общую статистику за месяц
       const monthlyStats = await financeApi.getStats(currentMonth);
       setStats(monthlyStats);
 
@@ -90,7 +94,6 @@ export function FinancePage() {
     const y = prevDate.getFullYear();
     const m = String(prevDate.getMonth() + 1).padStart(2, '0');
     setCurrentMonth(`${y}-${m}`);
-    setIsDistributing(false); // Сбрасываем режим распределения при смене месяца
     triggerHaptic('light');
   };
 
@@ -100,7 +103,6 @@ export function FinancePage() {
     const y = nextDate.getFullYear();
     const m = String(nextDate.getMonth() + 1).padStart(2, '0');
     setCurrentMonth(`${y}-${m}`);
-    setIsDistributing(false);
     triggerHaptic('light');
   };
 
@@ -128,7 +130,7 @@ export function FinancePage() {
     }
   };
 
-  // Создание транзакции
+  // Создание / Обновление транзакции
   const handleSaveTransaction = async (data: {
     type: 'income' | 'expense';
     amount: number;
@@ -138,19 +140,28 @@ export function FinancePage() {
   }) => {
     if (!account) return;
     try {
-      const result = await financeApi.createTransaction({
-        type: data.type,
-        amount: data.amount,
-        comment: data.comment,
-        date: data.date,
-        accountId: account.id,
-        categoryId: data.categoryId
-      });
+      if (transactionToEdit) {
+        // Режим редактирования
+        await financeApi.updateTransaction(transactionToEdit.id, {
+          amount: data.amount,
+          comment: data.comment,
+          date: data.date
+        });
+        triggerHaptic('success');
+      } else {
+        // Режим создания
+        await financeApi.createTransaction({
+          type: data.type,
+          amount: data.amount,
+          comment: data.comment,
+          date: data.date,
+          accountId: account.id,
+          categoryId: data.categoryId
+        });
+        triggerHaptic('success');
+      }
       
-      triggerHaptic('success');
-      
-      // Обновляем баланс и список расходов локально
-      setAccount(result.updatedAccount);
+      setTransactionToEdit(null);
       loadData();
     } catch (e) {
       console.error('Error saving transaction:', e);
@@ -158,114 +169,73 @@ export function FinancePage() {
     }
   };
 
-  // ─── Анимация полета монеты (Luxury Coin Fly) ───
-  const flyCoin = (fromEl: HTMLElement, toEl: HTMLElement) => {
-    const fromRect = fromEl.getBoundingClientRect();
-    const toCircle = toEl.querySelector('.category-circle');
-    const toRect = toCircle ? toCircle.getBoundingClientRect() : toEl.getBoundingClientRect();
-
-    // Создаем элемент монеты
-    const coin = document.createElement('div');
-    coin.className = 'luxury-coin-fly';
-    coin.innerText = '₽';
-    document.body.appendChild(coin);
-
-    // Центр начальной и конечной точек
-    const startX = fromRect.left + fromRect.width / 2;
-    const startY = fromRect.top + fromRect.height / 2;
-    const endX = toRect.left + toRect.width / 2;
-    const endY = toRect.top + toRect.height / 2;
-
-    // Средняя точка по X и завышенная по Y (эффект параболы)
-    const midX = (startX + endX) / 2;
-    const midY = Math.min(startY, endY) - 90;
-
-    // Кадры анимации (полет по дуге с вращением и масштабированием)
-    const keyframes = [
-      {
-        transform: `translate(${startX - 23}px, ${startY - 23}px) scale(0.3) rotate(0deg)`,
-        opacity: 0,
-      },
-      {
-        transform: `translate(${startX - 23}px, ${startY - 23}px) scale(1.1) rotate(45deg)`,
-        opacity: 1,
-        offset: 0.15
-      },
-      {
-        transform: `translate(${midX - 23}px, ${midY - 23}px) scale(1.5) rotate(180deg)`,
-        opacity: 0.95,
-        offset: 0.5
-      },
-      {
-        transform: `translate(${endX - 23}px, ${endY - 23}px) scale(0.8) rotate(320deg)`,
-        opacity: 0.9,
-        offset: 0.85
-      },
-      {
-        transform: `translate(${endX - 23}px, ${endY - 23}px) scale(0.2) rotate(360deg)`,
-        opacity: 0
-      }
-    ];
-
-    const anim = coin.animate(keyframes, {
-      duration: 650,
-      easing: 'cubic-bezier(0.25, 1, 0.5, 1)'
-    });
-
-    anim.onfinish = () => {
-      coin.remove();
-      // Добавляем класс всплеска на категорию
-      if (toCircle) {
-        toCircle.classList.add('luxury-bump');
-        setTimeout(() => {
-          toCircle.classList.remove('luxury-bump');
-        }, 500);
-      }
-    };
-  };
-
-  const handleCircleClick = () => {
-    if (!account || account.balance <= 0) {
-      // При нулевом балансе сразу предлагаем пополнить
-      setTransactionType('income');
-      setSelectedCategoryForTx(null);
-      setIsTransactionOpen(true);
-      triggerHaptic('light');
-      return;
-    }
-    // Переключаем режим распределения средств
-    setIsDistributing(prev => !prev);
+  // Редактирование дохода
+  const handleEditIncome = (tx: FinanceTransaction) => {
+    setTransactionToEdit(tx);
+    setTransactionType('income');
+    setIsTransactionOpen(true);
     triggerHaptic('light');
   };
 
-  const handleCategoryClick = (cat: ExpenseCategory, e: React.MouseEvent<HTMLDivElement>) => {
-    if (isDistributing) {
-      if (balanceRef.current) {
-        const balanceEl = balanceRef.current;
-        const categoryEl = e.currentTarget;
+  // Удаление дохода
+  const handleDeleteIncome = async (txId: number) => {
+    const confirmDelete = window.confirm('Вы действительно хотите удалить это пополнение?');
+    if (!confirmDelete) return;
 
-        triggerHaptic('medium');
-        
-        // Запуск анимации полета монеты
-        flyCoin(balanceEl, categoryEl);
-
-        // Отключаем режим распределения
-        setIsDistributing(false);
-
-        // Открываем модальное окно добавления расхода после анимации (650мс)
-        setTimeout(() => {
-          setSelectedCategoryForTx(cat);
-          setTransactionType('expense');
-          setIsTransactionOpen(true);
-          triggerHaptic('success');
-        }, 650);
-      }
-    } else {
-      // Обычный клик открывает аналитику
-      setSelectedCategoryDetail(cat);
-      triggerHaptic('light');
+    try {
+      await financeApi.deleteTransaction(txId);
+      triggerHaptic('success');
+      loadData();
+    } catch (e) {
+      console.error('Error deleting income:', e);
+      alert('Не удалось удалить пополнение');
     }
   };
+
+  // Группировка доходов по дням
+  const groupIncomesByDay = () => {
+    const incomes = transactions.filter(t => t.type === 'income');
+    const groups: { [key: string]: FinanceTransaction[] } = {};
+    incomes.forEach((tx) => {
+      const dateStr = tx.date;
+      if (!groups[dateStr]) {
+        groups[dateStr] = [];
+      }
+      groups[dateStr].push(tx);
+    });
+    return groups;
+  };
+
+  const formatDateLabel = (dateStr: string) => {
+    const date = new Date(dateStr);
+    
+    const localToday = new Date();
+    const offset = localToday.getTimezoneOffset();
+    const adjustedDate = new Date(localToday.getTime() - (offset * 60 * 1000));
+    const todayStr = adjustedDate.toISOString().split('T')[0];
+
+    const yesterdayDate = new Date(adjustedDate);
+    yesterdayDate.setDate(adjustedDate.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
+
+    const formatOptions: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'long' };
+    const weekdayOptions: Intl.DateTimeFormatOptions = { weekday: 'long' };
+
+    const dateFormatted = date.toLocaleDateString('ru-RU', formatOptions);
+    const weekday = date.toLocaleDateString('ru-RU', weekdayOptions);
+
+    if (dateStr === todayStr) {
+      return `Сегодня, ${dateFormatted}`;
+    } else if (dateStr === yesterdayStr) {
+      return `Вчера, ${dateFormatted}`;
+    } else {
+      const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+      return `${dateFormatted}, ${capitalizedWeekday}`;
+    }
+  };
+
+  const groupedIncomes = groupIncomesByDay();
+  const sortedIncomeDays = Object.keys(groupedIncomes).sort((a, b) => b.localeCompare(a));
 
   if (selectedCategoryDetail) {
     return (
@@ -301,112 +271,191 @@ export function FinancePage() {
         </div>
       </header>
 
-      {/* Карточки аналитики */}
-      <div className="finance-stats-grid">
-        <div className="finance-stat-card income">
-          <span className="stat-label">Доходы</span>
-          <span className="stat-value">+{stats.income} ₽</span>
-        </div>
-        <div className="finance-stat-card expense">
-          <span className="stat-label">Расходы</span>
-          <span className="stat-value">-{stats.expense} ₽</span>
-        </div>
-      </div>
-
-      {/* Большой круг Баланса (Кошелек) */}
-      <div className="balance-circle-section">
-        <div className="balance-circle-container">
-          <div 
-            ref={balanceRef}
-            className={`balance-circle ${isDistributing ? 'active-distribute' : ''}`}
-            onClick={handleCircleClick}
-          >
-            <span className="balance-circle-label">Баланс</span>
-            <span className="balance-circle-value">
-              {account ? account.balance : 0}
-            </span>
-            <span className="balance-circle-currency">рублей</span>
-          </div>
-          
-          <div className="balance-circle-pulsate" />
-          
-          {/* Кнопка "+" внизу справа от круга для быстрого пополнения */}
+      {/* Переключатель разделов: Segmented Control */}
+      <div className="segmented-control-container">
+        <div className="segmented-control">
           <button 
-            className="balance-circle-add" 
+            className={`segmented-control-btn ${activeSection === 'expenses' ? 'active' : ''}`}
             onClick={() => {
-              setTransactionType('income');
-              setSelectedCategoryForTx(null);
-              setIsTransactionOpen(true);
+              setActiveSection('expenses');
               triggerHaptic('light');
             }}
-            title="Пополнить баланс"
           >
-            +
+            Расходы
+          </button>
+          <button 
+            className={`segmented-control-btn ${activeSection === 'incomes' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveSection('incomes');
+              triggerHaptic('light');
+            }}
+          >
+            Доходы
           </button>
         </div>
       </div>
 
-      {/* Сетка категорий расходов */}
-      <div className="categories-section">
-        <div className="categories-title-row">
-          <h2>Категории расходов</h2>
-          <span style={{ 
-            fontSize: 'var(--font-size-xs)', 
-            color: isDistributing ? 'var(--color-accent)' : 'var(--text-muted)',
-            fontWeight: isDistributing ? '700' : 'normal',
-            transition: 'color var(--transition-fast)'
-          }}>
-            {isDistributing 
-              ? '✨ Нажмите на категорию ниже'
-              : (account && account.balance > 0 
-                  ? 'Нажмите на баланс для распределения' 
-                  : 'Пополните баланс для внесения расходов')}
-          </span>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+          Загрузка финансовых данных...
         </div>
-
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
-            Загрузка категорий...
-          </div>
-        ) : (
-          <div className="categories-grid">
-            {categories.map((cat) => (
-              <div 
-                key={cat.id}
-                className="category-circle-wrapper"
-                data-category-id={cat.id}
-                onClick={(e) => handleCategoryClick(cat, e)}
-              >
-                <div 
-                  className={`category-circle ${isDistributing ? 'active-target' : ''}`}
-                  style={{ backgroundColor: `${cat.color}40`, borderColor: cat.color }}
-                >
-                  <span className="category-circle-icon">{cat.icon}</span>
-                  {cat.spentThisMonth > 0 && (
-                    <div className="category-badge">
-                      {Math.round(cat.spentThisMonth)} ₽
-                    </div>
-                  )}
-                </div>
-                <span className="category-label">{cat.name}</span>
-              </div>
-            ))}
-
-            {/* Кнопка "+" для добавления категории */}
-            <div className="category-circle-wrapper" onClick={() => {
-              setIsAddCategoryOpen(true);
-              triggerHaptic('light');
-            }}>
-              <button className="category-circle add-category-btn">
-                <span className="add-category-icon">+</span>
-              </button>
-              <span className="category-label">Категория</span>
+      ) : activeSection === 'expenses' ? (
+        /* ================= РАЗДЕЛ РАСХОДОВ ================= */
+        <>
+          {/* Сводная карточка расходов */}
+          <div className="income-balance-card" style={{ borderColor: 'rgba(45, 45, 45, 0.15)' }}>
+            <div className="balance-title">Расходы за {getMonthLabel(currentMonth)}</div>
+            <div className="balance-value" style={{ color: 'var(--text-primary)' }}>
+              -{stats.expense} ₽
+            </div>
+            <div className="balance-details">
+              Баланс кошелька: <strong>{account ? account.balance : 0} ₽</strong>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Модалка создания категории */}
+          {/* Сетка категорий */}
+          <div className="categories-section">
+            <div className="categories-title-row" style={{ marginBottom: '20px' }}>
+              <h2>Категории расходов</h2>
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                Нажмите для аналитики и внесения расхода
+              </span>
+            </div>
+
+            <div className="categories-grid">
+              {categories.map((cat) => (
+                <div 
+                  key={cat.id}
+                  className="category-circle-wrapper"
+                  data-category-id={cat.id}
+                  onClick={() => {
+                    setSelectedCategoryDetail(cat);
+                    triggerHaptic('light');
+                  }}
+                >
+                  <div 
+                    className="category-circle"
+                    style={{ backgroundColor: `${cat.color}40`, borderColor: cat.color }}
+                  >
+                    <span className="category-circle-icon">{cat.icon}</span>
+                    {cat.spentThisMonth > 0 && (
+                      <div className="category-badge">
+                        {Math.round(cat.spentThisMonth)} ₽
+                      </div>
+                    )}
+                  </div>
+                  <span className="category-label">{cat.name}</span>
+                </div>
+              ))}
+
+              {/* Добавить категорию */}
+              <div className="category-circle-wrapper" onClick={() => {
+                setIsAddCategoryOpen(true);
+                triggerHaptic('light');
+              }}>
+                <button className="category-circle add-category-btn">
+                  <span className="add-category-icon">+</span>
+                </button>
+                <span className="category-label">Категория</span>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        /* ================= РАЗДЕЛ ДОХОДОВ ================= */
+        <>
+          {/* Сводная карточка доходов */}
+          <div className="income-balance-card" style={{ borderColor: 'rgba(90, 143, 90, 0.25)' }}>
+            <div className="balance-title">Текущий баланс кошелька</div>
+            <div className="balance-value" style={{ color: 'var(--color-success)' }}>
+              {account ? account.balance : 0} ₽
+            </div>
+            <div className="balance-details">
+              Поступления за месяц: <strong>+{stats.income} ₽</strong>
+            </div>
+          </div>
+
+          {/* Кнопка "Добавить доход" */}
+          <div className="finance-action-btn-container">
+            <button 
+              className="finance-action-btn income-btn"
+              onClick={() => {
+                setTransactionType('income');
+                setTransactionToEdit(null);
+                setIsTransactionOpen(true);
+                triggerHaptic('light');
+              }}
+            >
+              ➕ Внести доход
+            </button>
+          </div>
+
+          {/* Список доходов */}
+          <div className="transactions-section" style={{ margin: 0 }}>
+            <h2 style={{ marginBottom: '16px' }}>Поступления средств</h2>
+            {sortedIncomeDays.length === 0 ? (
+              <div className="transactions-list-empty">
+                Нет поступлений в этом месяце. Нажмите кнопку выше, чтобы добавить первый доход
+              </div>
+            ) : (
+              sortedIncomeDays.map((day) => (
+                <div key={day} className="transaction-day-group">
+                  <div className="transaction-day-title">{formatDateLabel(day)}</div>
+                  <div className="transaction-day-items">
+                    {groupedIncomes[day].map((tx) => (
+                      <div key={tx.id} className="transaction-item">
+                        <div className="transaction-item-left">
+                          <div 
+                            className="transaction-item-icon"
+                            style={{ backgroundColor: 'rgba(90, 143, 90, 0.15)', color: 'var(--color-success)' }}
+                          >
+                            💰
+                          </div>
+                          <div className="transaction-item-details">
+                            <span className="transaction-item-title">
+                              {tx.comment || 'Пополнение'}
+                            </span>
+                            <span className="transaction-item-comment">
+                              {tx.date.split('-').reverse().join('.')}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="transaction-item-right" style={{ gap: '4px' }}>
+                          <span className="transaction-item-amount income" style={{ marginRight: '8px' }}>
+                            +{tx.amount} ₽
+                          </span>
+                          
+                          {/* Кнопка изменения */}
+                          <button 
+                            className="transaction-item-delete"
+                            onClick={() => handleEditIncome(tx)}
+                            title="Изменить доход"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            ✏️
+                          </button>
+
+                          {/* Кнопка удаления */}
+                          <button 
+                            className="transaction-item-delete"
+                            onClick={() => handleDeleteIncome(tx.id)}
+                            title="Удалить доход"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Модалка создания/редактирования категории */}
       <AddCategoryModal
         isOpen={isAddCategoryOpen}
         onClose={() => {
@@ -417,16 +466,18 @@ export function FinancePage() {
         categoryToEdit={categoryToEdit}
       />
 
-      {/* Модалка транзакции (доход / расход) */}
+      {/* Модалка создания/редактирования транзакции (доход / расход) */}
       <TransactionModal
         isOpen={isTransactionOpen}
         onClose={() => {
           setIsTransactionOpen(false);
           setSelectedCategoryForTx(null);
+          setTransactionToEdit(null);
         }}
         onSave={handleSaveTransaction}
         type={transactionType}
         category={selectedCategoryForTx}
+        transactionToEdit={transactionToEdit}
       />
     </div>
   );

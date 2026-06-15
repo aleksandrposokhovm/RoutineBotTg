@@ -406,6 +406,81 @@ router.delete('/transactions/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * PUT /api/finance/transactions/:id
+ * Обновить транзакцию (изменение суммы, комментария, даты) с корректировкой баланса.
+ */
+router.put('/transactions/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const transactionId = parseInt(req.params.id as string);
+    const { amount, comment, date } = req.body;
+
+    if (isNaN(transactionId)) {
+      return res.status(400).json({ error: 'Некорректный ID транзакции' });
+    }
+
+    const transaction = await prisma.financeTransaction.findUnique({
+      where: { id: transactionId }
+    });
+
+    if (!transaction || transaction.userId !== userId) {
+      return res.status(404).json({ error: 'Транзакция не найдена' });
+    }
+
+    const newAmount = amount !== undefined ? parseFloat(amount) : transaction.amount;
+    const newComment = comment !== undefined ? (comment ? comment.trim() : null) : transaction.comment;
+    const newDate = date !== undefined ? date : transaction.date;
+
+    if (amount !== undefined && (isNaN(newAmount) || newAmount <= 0)) {
+      return res.status(400).json({ error: 'Сумма транзакции должна быть положительным числом' });
+    }
+    if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      return res.status(400).json({ error: 'Необходима дата в формате YYYY-MM-DD' });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Обновляем транзакцию
+      const updatedTx = await tx.financeTransaction.update({
+        where: { id: transactionId },
+        data: {
+          amount: newAmount,
+          comment: newComment,
+          date: newDate
+        },
+        include: {
+          account: true,
+          category: true
+        }
+      });
+
+      // Корректируем баланс счета
+      if (transaction.accountId && newAmount !== transaction.amount) {
+        const diff = newAmount - transaction.amount;
+        const balanceChange = transaction.type === 'income' ? diff : -diff;
+
+        const updatedAccount = await tx.financeAccount.update({
+          where: { id: transaction.accountId },
+          data: {
+            balance: {
+              increment: balanceChange
+            }
+          }
+        });
+
+        return { transaction: updatedTx, updatedAccount };
+      }
+
+      return { transaction: updatedTx, updatedAccount: null };
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error updating transaction:', error);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера при обновлении транзакции' });
+  }
+});
+
+/**
  * GET /api/finance/stats
  * Получить общую сумму доходов и расходов за указанный месяц.
  * Query: month = YYYY-MM

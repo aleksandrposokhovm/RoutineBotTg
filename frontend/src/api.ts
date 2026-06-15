@@ -315,6 +315,12 @@ export const financeApi = {
       method: 'DELETE',
     }),
 
+  updateTransaction: (id: number, data: Partial<{ amount: number; comment: string; date: string }>) =>
+    api<{ transaction: FinanceTransaction; updatedAccount: FinanceAccount | null }>(`/finance/transactions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
   getStats: (month: string) =>
     api<FinanceStats>(`/finance/stats?month=${month}`),
 

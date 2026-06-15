@@ -1783,4 +1783,110 @@ body {
   100% { transform: scale(1); }
 }
 
+/* Переключатель разделов (Segmented Control) */
+.segmented-control-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.segmented-control {
+  display: flex;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  padding: 4px;
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 340px;
+  box-shadow: var(--shadow-sm);
+}
+
+.segmented-control-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.segmented-control-btn.active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Кнопка "Добавить доход" / "Добавить расход" */
+.finance-action-btn-container {
+  display: flex;
+  justify-content: center;
+  margin: 16px 0 24px 0;
+}
+
+.finance-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-graphite);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
+}
+
+.finance-action-btn:active {
+  transform: scale(0.95);
+  background: var(--color-accent);
+}
+
+.finance-action-btn.income-btn {
+  background: var(--color-success);
+}
+
+.finance-action-btn.income-btn:active {
+  background: #4A7F4A;
+}
+
+/* Блок общего баланса для вкладки Доходов */
+.income-balance-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  padding: 24px 20px;
+  text-align: center;
+  box-shadow: var(--shadow-md);
+  margin-bottom: 24px;
+}
+
+.income-balance-card .balance-title {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.income-balance-card .balance-value {
+  font-size: var(--font-size-2xl);
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.income-balance-card .balance-details {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
 

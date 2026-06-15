@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { financeApi } from '../api';
 import type { ExpenseCategory, FinanceTransaction } from '../api';
+import { TransactionModal } from './TransactionModal';
 
 interface CategoryDetailViewProps {
   category: ExpenseCategory;
@@ -22,6 +23,9 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
   const [history, setHistory] = useState<{ month: string; label: string; amount: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Модалка добавления расхода
+  const [isAddTxOpen, setIsAddTxOpen] = useState(false);
 
   const loadStats = useCallback(async () => {
     try {
@@ -73,7 +77,6 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
 
     try {
       await financeApi.deleteTransaction(txId);
-      // Перезагружаем статистику
       loadStats();
       onTransactionDeleted();
     } catch (err) {
@@ -99,6 +102,35 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
     }
   };
 
+  // Создание транзакции расхода
+  const handleSaveTransaction = async (data: {
+    type: 'income' | 'expense';
+    amount: number;
+    comment: string;
+    date: string;
+  }) => {
+    try {
+      const accountsList = await financeApi.getAccounts();
+      if (accountsList.length === 0) return;
+
+      await financeApi.createTransaction({
+        type: data.type,
+        amount: data.amount,
+        comment: data.comment,
+        date: data.date,
+        accountId: accountsList[0].id,
+        categoryId: category.id
+      });
+
+      // Обновляем статистику
+      loadStats();
+      onTransactionDeleted(); // Оповещаем родителя для обновления
+    } catch (err) {
+      console.error('Error creating transaction:', err);
+      alert('Не удалось добавить расход');
+    }
+  };
+
   // Группировка транзакций по дням
   const groupTransactionsByDay = () => {
     const groups: { [key: string]: FinanceTransaction[] } = {};
@@ -115,7 +147,6 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
   const formatDateLabel = (dateStr: string) => {
     const date = new Date(dateStr);
     
-    // Сравнение без учета часовых поясов (работаем чисто со строками)
     const localToday = new Date();
     const offset = localToday.getTimezoneOffset();
     const adjustedDate = new Date(localToday.getTime() - (offset * 60 * 1000));
@@ -151,20 +182,16 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
     const paddingX = 25;
     const paddingY = 15;
 
-    // Расчет точек
     const points = history.map((h, i) => {
       const x = paddingX + (i * (chartWidth - 2 * paddingX)) / (history.length - 1);
-      // Если maxAmount === 0, то все значения по нулям, центрируем Y
       const y = maxAmount > 0
         ? chartHeight - paddingY - (h.amount / maxAmount) * (chartHeight - 2 * paddingY)
         : chartHeight / 2;
       return { x, y, ...h };
     });
 
-    // Строка пути для линии
     const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 
-    // Строка пути для заливки области
     const areaPath = points.length > 0
       ? `${linePath} L ${points[points.length - 1].x} ${chartHeight - paddingY} L ${points[0].x} ${chartHeight - paddingY} Z`
       : '';
@@ -179,18 +206,14 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
             </linearGradient>
           </defs>
 
-          {/* Сетки по оси Y (пунктирные линии) */}
           <line x1={paddingX} y1={paddingY} x2={chartWidth - paddingX} y2={paddingY} stroke="var(--border-color)" strokeWidth="1" strokeDasharray="3,3" />
           <line x1={paddingX} y1={chartHeight / 2} x2={chartWidth - paddingX} y2={chartHeight / 2} stroke="var(--border-color)" strokeWidth="1" strokeDasharray="3,3" />
           <line x1={paddingX} y1={chartHeight - paddingY} x2={chartWidth - paddingX} y2={chartHeight - paddingY} stroke="var(--border-color)" strokeWidth="1" />
 
-          {/* Заливка области */}
           {areaPath && <path d={areaPath} fill="url(#areaGradient)" />}
 
-          {/* Линия графика */}
           <path d={linePath} fill="none" stroke={category.color} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* Точки на графике */}
           {points.map((p, i) => (
             <g key={i}>
               <circle
@@ -216,7 +239,6 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
           ))}
         </svg>
 
-        {/* Подписи месяцев внизу */}
         <div className="chart-labels">
           {points.map((p, i) => (
             <div key={i} className="chart-label-item" style={{ width: `${100 / history.length}%` }}>
@@ -229,7 +251,7 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
   };
 
   const grouped = groupTransactionsByDay();
-  const sortedDays = Object.keys(grouped).sort((a, b) => b.localeCompare(a)); // От свежих к старым
+  const sortedDays = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
 
   return (
     <div className="category-detail-view">
@@ -265,7 +287,6 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
         </button>
       </header>
 
-      {/* Переключатель периода */}
       <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0 10px 0' }}>
         <div className="finance-period-selector">
           <button className="finance-period-btn" onClick={handlePrevMonth}>
@@ -288,15 +309,30 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
         </div>
       ) : (
         <>
-          {/* Секция Графика */}
           <div className="chart-section">
             <div className="chart-section-title">Тренд расходов за 4 месяца</div>
             {renderChart()}
           </div>
 
-          {/* Список Транзакций */}
           <div className="transactions-section">
-            <h2>История расходов</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2>История расходов</h2>
+              <button 
+                className="finance-action-btn"
+                style={{ 
+                  margin: 0, 
+                  padding: '6px 14px', 
+                  fontSize: 'var(--font-size-xs)', 
+                  borderRadius: 'var(--radius-md)', 
+                  background: 'var(--color-graphite)', 
+                  color: 'white' 
+                }}
+                onClick={() => setIsAddTxOpen(true)}
+              >
+                ➕ Добавить расход
+              </button>
+            </div>
+
             {transactions.length === 0 ? (
               <div className="transactions-list-empty">
                 Нет расходов по этой категории в выбранном месяце
@@ -344,6 +380,15 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
           </div>
         </>
       )}
+
+      {/* Модалка транзакции расхода */}
+      <TransactionModal
+        isOpen={isAddTxOpen}
+        onClose={() => setIsAddTxOpen(false)}
+        onSave={handleSaveTransaction}
+        type="expense"
+        category={category}
+      />
     </div>
   );
 };

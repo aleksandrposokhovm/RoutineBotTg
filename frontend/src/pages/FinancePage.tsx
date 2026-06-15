@@ -36,6 +36,9 @@ export function FinancePage() {
   const [stats, setStats] = useState<FinanceStats>({ income: 0, expense: 0 });
   const [loading, setLoading] = useState(true);
 
+  // Режим распределения средств (когда нажали на баланс и выбираем категорию)
+  const [isDistributing, setIsDistributing] = useState(false);
+
   // Состояние модалок
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
   const [categoryToEdit, setCategoryToEdit] = useState<ExpenseCategory | null>(null);
@@ -47,18 +50,8 @@ export function FinancePage() {
   // Состояние детального просмотра
   const [selectedCategoryDetail, setSelectedCategoryDetail] = useState<ExpenseCategory | null>(null);
 
-  // Реф для отслеживания перетаскивания
-  const dragInfo = useRef<{
-    startX: number;
-    startY: number;
-    ghost: HTMLDivElement | null;
-    currentOverId: number | null;
-  }>({
-    startX: 0,
-    startY: 0,
-    ghost: null,
-    currentOverId: null
-  });
+  // Реф на центральный круг баланса для вычисления координат полета
+  const balanceRef = useRef<HTMLDivElement | null>(null);
 
   // Загрузка данных
   const loadData = useCallback(async () => {
@@ -97,6 +90,7 @@ export function FinancePage() {
     const y = prevDate.getFullYear();
     const m = String(prevDate.getMonth() + 1).padStart(2, '0');
     setCurrentMonth(`${y}-${m}`);
+    setIsDistributing(false); // Сбрасываем режим распределения при смене месяца
     triggerHaptic('light');
   };
 
@@ -106,6 +100,7 @@ export function FinancePage() {
     const y = nextDate.getFullYear();
     const m = String(nextDate.getMonth() + 1).padStart(2, '0');
     setCurrentMonth(`${y}-${m}`);
+    setIsDistributing(false);
     triggerHaptic('light');
   };
 
@@ -163,109 +158,113 @@ export function FinancePage() {
     }
   };
 
-  // ─── Touch Drag-and-Drop Логика ───
+  // ─── Анимация полета монеты (Luxury Coin Fly) ───
+  const flyCoin = (fromEl: HTMLElement, toEl: HTMLElement) => {
+    const fromRect = fromEl.getBoundingClientRect();
+    const toCircle = toEl.querySelector('.category-circle');
+    const toRect = toCircle ? toCircle.getBoundingClientRect() : toEl.getBoundingClientRect();
 
-  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!account || account.balance <= 0) return; // Не перетаскиваем, если баланс нулевой или отрицательный
+    // Создаем элемент монеты
+    const coin = document.createElement('div');
+    coin.className = 'luxury-coin-fly';
+    coin.innerText = '₽';
+    document.body.appendChild(coin);
 
-    const touch = e.touches[0];
-    dragInfo.current.startX = touch.clientX;
-    dragInfo.current.startY = touch.clientY;
+    // Центр начальной и конечной точек
+    const startX = fromRect.left + fromRect.width / 2;
+    const startY = fromRect.top + fromRect.height / 2;
+    const endX = toRect.left + toRect.width / 2;
+    const endY = toRect.top + toRect.height / 2;
 
-    // Вибрация начала перетаскивания
-    triggerHaptic('medium');
+    // Средняя точка по X и завышенная по Y (эффект параболы)
+    const midX = (startX + endX) / 2;
+    const midY = Math.min(startY, endY) - 90;
 
-    // Создаем ghost-круг в DOM
-    const ghost = document.createElement('div');
-    ghost.className = 'drag-ghost';
-    ghost.innerText = '₽';
-    ghost.style.left = `${touch.clientX}px`;
-    ghost.style.top = `${touch.clientY}px`;
-    document.body.appendChild(ghost);
-
-    dragInfo.current.ghost = ghost;
-  };
-
-  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    const ghost = dragInfo.current.ghost;
-    if (!ghost) return;
-
-    const touch = e.touches[0];
-    ghost.style.left = `${touch.clientX}px`;
-    ghost.style.top = `${touch.clientY}px`;
-
-    // Определяем, над каким элементом сейчас находится палец
-    const element = document.elementFromPoint(touch.clientX, touch.clientY);
-    if (!element) return;
-
-    // Ищем контейнер категории с атрибутом data-category-id
-    const categoryEl = element.closest('[data-category-id]');
-    if (categoryEl) {
-      const categoryId = parseInt(categoryEl.getAttribute('data-category-id') || '0');
-      if (categoryId && dragInfo.current.currentOverId !== categoryId) {
-        // Убираем подсветку со старого
-        if (dragInfo.current.currentOverId) {
-          const prevEl = document.querySelector(`[data-category-id="${dragInfo.current.currentOverId}"] .category-circle`);
-          prevEl?.classList.remove('drag-over');
-        }
-        
-        // Подсвечиваем новый
-        const currentCircle = categoryEl.querySelector('.category-circle');
-        currentCircle?.classList.add('drag-over');
-        
-        dragInfo.current.currentOverId = categoryId;
-        
-        // Легкая вибрация при наведении на цель
-        triggerHaptic('light');
+    // Кадры анимации (полет по дуге с вращением и масштабированием)
+    const keyframes = [
+      {
+        transform: `translate(${startX - 23}px, ${startY - 23}px) scale(0.3) rotate(0deg)`,
+        opacity: 0,
+      },
+      {
+        transform: `translate(${startX - 23}px, ${startY - 23}px) scale(1.1) rotate(45deg)`,
+        opacity: 1,
+        offset: 0.15
+      },
+      {
+        transform: `translate(${midX - 23}px, ${midY - 23}px) scale(1.5) rotate(180deg)`,
+        opacity: 0.95,
+        offset: 0.5
+      },
+      {
+        transform: `translate(${endX - 23}px, ${endY - 23}px) scale(0.8) rotate(320deg)`,
+        opacity: 0.9,
+        offset: 0.85
+      },
+      {
+        transform: `translate(${endX - 23}px, ${endY - 23}px) scale(0.2) rotate(360deg)`,
+        opacity: 0
       }
-    } else {
-      // Палец вышел за пределы категорий
-      if (dragInfo.current.currentOverId) {
-        const prevEl = document.querySelector(`[data-category-id="${dragInfo.current.currentOverId}"] .category-circle`);
-        prevEl?.classList.remove('drag-over');
-        dragInfo.current.currentOverId = null;
+    ];
+
+    const anim = coin.animate(keyframes, {
+      duration: 650,
+      easing: 'cubic-bezier(0.25, 1, 0.5, 1)'
+    });
+
+    anim.onfinish = () => {
+      coin.remove();
+      // Добавляем класс всплеска на категорию
+      if (toCircle) {
+        toCircle.classList.add('luxury-bump');
+        setTimeout(() => {
+          toCircle.classList.remove('luxury-bump');
+        }, 500);
       }
-    }
-  };
-
-  const handleTouchEnd = () => {
-    const ghost = dragInfo.current.ghost;
-    if (!ghost) return;
-
-    // Удаляем ghost элемент
-    ghost.remove();
-    dragInfo.current.ghost = null;
-
-    // Снимаем подсветку с подсвеченной категории
-    const overId = dragInfo.current.currentOverId;
-    if (overId) {
-      const circleEl = document.querySelector(`[data-category-id="${overId}"] .category-circle`);
-      circleEl?.classList.remove('drag-over');
-      dragInfo.current.currentOverId = null;
-
-      // Находим выбранную категорию
-      const targetCat = categories.find((c) => c.id === overId);
-      if (targetCat) {
-        // Успех! Открываем форму расхода для этой категории
-        setSelectedCategoryForTx(targetCat);
-        setTransactionType('expense');
-        setIsTransactionOpen(true);
-        triggerHaptic('success');
-      }
-    }
+    };
   };
 
   const handleCircleClick = () => {
-    // При тапе открываем быстрое пополнение баланса
-    setTransactionType('income');
-    setSelectedCategoryForTx(null);
-    setIsTransactionOpen(true);
+    if (!account || account.balance <= 0) {
+      // При нулевом балансе сразу предлагаем пополнить
+      setTransactionType('income');
+      setSelectedCategoryForTx(null);
+      setIsTransactionOpen(true);
+      triggerHaptic('light');
+      return;
+    }
+    // Переключаем режим распределения средств
+    setIsDistributing(prev => !prev);
     triggerHaptic('light');
   };
 
-  const handleCategoryClick = (cat: ExpenseCategory) => {
-    setSelectedCategoryDetail(cat);
-    triggerHaptic('light');
+  const handleCategoryClick = (cat: ExpenseCategory, e: React.MouseEvent<HTMLDivElement>) => {
+    if (isDistributing) {
+      if (balanceRef.current) {
+        const balanceEl = balanceRef.current;
+        const categoryEl = e.currentTarget;
+
+        triggerHaptic('medium');
+        
+        // Запуск анимации полета монеты
+        flyCoin(balanceEl, categoryEl);
+
+        // Отключаем режим распределения
+        setIsDistributing(false);
+
+        // Открываем модальное окно добавления расхода после анимации (650мс)
+        setTimeout(() => {
+          setSelectedCategoryForTx(cat);
+          setTransactionType('expense');
+          setIsTransactionOpen(true);
+          triggerHaptic('success');
+        }, 650);
+      }
+    } else {
+      // Обычный клик открывает аналитику
+      setSelectedCategoryDetail(cat);
+      triggerHaptic('light');
+    }
   };
 
   if (selectedCategoryDetail) {
@@ -318,10 +317,8 @@ export function FinancePage() {
       <div className="balance-circle-section">
         <div className="balance-circle-container">
           <div 
-            className="balance-circle"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
+            ref={balanceRef}
+            className={`balance-circle ${isDistributing ? 'active-distribute' : ''}`}
             onClick={handleCircleClick}
           >
             <span className="balance-circle-label">Баланс</span>
@@ -336,7 +333,12 @@ export function FinancePage() {
           {/* Кнопка "+" внизу справа от круга для быстрого пополнения */}
           <button 
             className="balance-circle-add" 
-            onClick={handleCircleClick}
+            onClick={() => {
+              setTransactionType('income');
+              setSelectedCategoryForTx(null);
+              setIsTransactionOpen(true);
+              triggerHaptic('light');
+            }}
             title="Пополнить баланс"
           >
             +
@@ -348,10 +350,17 @@ export function FinancePage() {
       <div className="categories-section">
         <div className="categories-title-row">
           <h2>Категории расходов</h2>
-          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-            {account && account.balance > 0 
-              ? 'Перетащите баланс в круг для расхода' 
-              : 'Пополните баланс, чтобы вносить расходы'}
+          <span style={{ 
+            fontSize: 'var(--font-size-xs)', 
+            color: isDistributing ? 'var(--color-accent)' : 'var(--text-muted)',
+            fontWeight: isDistributing ? '700' : 'normal',
+            transition: 'color var(--transition-fast)'
+          }}>
+            {isDistributing 
+              ? '✨ Нажмите на категорию ниже'
+              : (account && account.balance > 0 
+                  ? 'Нажмите на баланс для распределения' 
+                  : 'Пополните баланс для внесения расходов')}
           </span>
         </div>
 
@@ -366,10 +375,10 @@ export function FinancePage() {
                 key={cat.id}
                 className="category-circle-wrapper"
                 data-category-id={cat.id}
-                onClick={() => handleCategoryClick(cat)}
+                onClick={(e) => handleCategoryClick(cat, e)}
               >
                 <div 
-                  className="category-circle"
+                  className={`category-circle ${isDistributing ? 'active-target' : ''}`}
                   style={{ backgroundColor: `${cat.color}40`, borderColor: cat.color }}
                 >
                   <span className="category-circle-icon">{cat.icon}</span>
@@ -384,7 +393,10 @@ export function FinancePage() {
             ))}
 
             {/* Кнопка "+" для добавления категории */}
-            <div className="category-circle-wrapper" onClick={() => setIsAddCategoryOpen(true)}>
+            <div className="category-circle-wrapper" onClick={() => {
+              setIsAddCategoryOpen(true);
+              triggerHaptic('light');
+            }}>
               <button className="category-circle add-category-btn">
                 <span className="add-category-icon">+</span>
               </button>

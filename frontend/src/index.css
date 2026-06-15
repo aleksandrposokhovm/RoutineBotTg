@@ -1722,3 +1722,65 @@ body {
   background: var(--color-accent);
 }
 
+/* Состояние распределения средств (Luxury режим) */
+.balance-circle.active-distribute {
+  box-shadow: 0 0 25px rgba(139, 115, 85, 0.8), inset 0 0 15px rgba(255, 255, 255, 0.4);
+  transform: scale(1.04);
+  animation: luxury-float 3s ease-in-out infinite;
+}
+
+@keyframes luxury-float {
+  0%, 100% { transform: scale(1.04) translateY(0); }
+  50% { transform: scale(1.06) translateY(-4px); }
+}
+
+.category-circle.active-target {
+  animation: target-pulse 1.5s infinite alternate;
+  border-style: solid;
+}
+
+@keyframes target-pulse {
+  0% {
+    box-shadow: var(--shadow-sm);
+    transform: scale(1);
+  }
+  100% {
+    box-shadow: 0 0 12px rgba(139, 115, 85, 0.4);
+    transform: scale(1.06);
+    border-color: var(--color-accent);
+  }
+}
+
+/* Монета для анимации полета (Luxury Coin Fly) */
+.luxury-coin-fly {
+  position: fixed;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #FFF0D0 0%, #D4AF37 40%, #AA7C11 80%, #5B4000 100%);
+  border: 1.5px solid #FFE090;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25), 0 0 12px rgba(212, 175, 55, 0.6);
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #5B4000;
+  font-size: 18px;
+  font-weight: 800;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.6);
+  transform-origin: center;
+}
+
+/* Эффект всплеска при приземлении монеты */
+.category-circle.luxury-bump {
+  animation: luxury-bump-effect 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes luxury-bump-effect {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.25); box-shadow: 0 0 20px rgba(139, 115, 85, 0.6); }
+  100% { transform: scale(1); }
+}
+
+

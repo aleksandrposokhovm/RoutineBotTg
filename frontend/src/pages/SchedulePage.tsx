@@ -65,6 +65,7 @@ export function SchedulePage() {
       }
     } catch (e) {
       console.error('Error getting Google Auth URL:', e);
+      alert('Не удалось подключить Google Календарь: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
 

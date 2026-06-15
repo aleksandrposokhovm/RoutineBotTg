@@ -26,6 +26,54 @@ model User {
   dietEntries     DietEntry[]
   nutritionProfile NutritionProfile?
   chatMessages    ChatMessage[]
+  financeAccounts FinanceAccount[]
+  expenseCategories ExpenseCategory[]
+  financeTransactions FinanceTransaction[]
+}
+
+/// Финансовый счет пользователя (например, "Кошелек" / "Карта")
+model FinanceAccount {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  name      String
+  balance   Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions FinanceTransaction[]
+}
+
+/// Категория расходов пользователя
+model ExpenseCategory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  name      String
+  icon      String   // Эмодзи
+  color     String   // Цвет (например, "#FFB3BA")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions FinanceTransaction[]
+}
+
+/// Финансовая транзакция (доход или расход)
+model FinanceTransaction {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  type       String   // "income" | "expense"
+  amount     Float
+  comment    String?
+  date       String   // YYYY-MM-DD
+  accountId  Int?
+  categoryId Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinanceAccount?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  category ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 }
 
 /// Событие в расписании (жесткая привязка ко времени, хранится в UTC)

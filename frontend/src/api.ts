@@ -67,6 +67,53 @@ export interface UserProfile {
   isGoogleCalendarConnected: boolean;
 }
 
+// ─── Finance Types ───
+export interface FinanceAccount {
+  id: number;
+  userId: number;
+  name: string;
+  balance: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExpenseCategory {
+  id: number;
+  userId: number;
+  name: string;
+  icon: string;
+  color: string;
+  spentThisMonth: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FinanceTransaction {
+  id: number;
+  userId: number;
+  type: 'income' | 'expense';
+  amount: number;
+  comment: string | null;
+  date: string;
+  accountId: number | null;
+  categoryId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  account?: FinanceAccount | null;
+  category?: ExpenseCategory | null;
+}
+
+export interface FinanceStats {
+  income: number;
+  expense: number;
+}
+
+export interface CategoryStats {
+  category: ExpenseCategory;
+  transactions: FinanceTransaction[];
+  history: { month: string; label: string; amount: number }[];
+}
+
 export async function api<T = unknown>(
   endpoint: string,
   options?: RequestInit
@@ -214,4 +261,63 @@ export const googleAuthApi = {
 
   disconnect: () =>
     api<{ success: boolean }>('/google/disconnect', { method: 'POST' }),
+};
+
+// ─── Finance API ───
+export const financeApi = {
+  getAccounts: () =>
+    api<FinanceAccount[]>('/finance/accounts'),
+
+  createAccount: (name: string, balance?: number) =>
+    api<FinanceAccount>('/finance/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name, balance }),
+    }),
+
+  getCategories: (month: string) =>
+    api<ExpenseCategory[]>(`/finance/categories?month=${month}`),
+
+  createCategory: (data: { name: string; icon: string; color: string }) =>
+    api<ExpenseCategory>('/finance/categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateCategory: (id: number, data: Partial<{ name: string; icon: string; color: string }>) =>
+    api<ExpenseCategory>(`/finance/categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteCategory: (id: number) =>
+    api<{ success: boolean }>(`/finance/categories/${id}`, {
+      method: 'DELETE',
+    }),
+
+  getTransactions: (month: string) =>
+    api<FinanceTransaction[]>(`/finance/transactions?month=${month}`),
+
+  createTransaction: (data: {
+    type: 'income' | 'expense';
+    amount: number;
+    comment?: string;
+    date: string;
+    accountId: number;
+    categoryId?: number;
+  }) =>
+    api<{ transaction: FinanceTransaction; updatedAccount: FinanceAccount }>('/finance/transactions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteTransaction: (id: number) =>
+    api<{ success: boolean }>(`/finance/transactions/${id}`, {
+      method: 'DELETE',
+    }),
+
+  getStats: (month: string) =>
+    api<FinanceStats>(`/finance/stats?month=${month}`),
+
+  getCategoryStats: (categoryId: number, month: string) =>
+    api<CategoryStats>(`/finance/categories/${categoryId}/stats?month=${month}`),
 };

@@ -7,6 +7,7 @@ import plansRoutes from './plans';
 import dietRoutes from './diet';
 import profileRoutes from './profile';
 import { publicGoogleAuthRouter, protectedGoogleAuthRouter } from './googleAuth';
+import financeRoutes from './finance';
 import { validateTelegramWebApp } from './auth';
 
 export function createApp() {
@@ -36,6 +37,7 @@ export function createApp() {
   app.use('/api/diet', dietRoutes);
   app.use('/api/profile', profileRoutes);
   app.use('/api/google', protectedGoogleAuthRouter);
+  app.use('/api/finance', financeRoutes);
 
   // Автоматическая раздача статических файлов фронтенда в продакшене
   const staticPath = process.env.STATIC_FILES_PATH || path.resolve(__dirname, '../../../frontend/dist');

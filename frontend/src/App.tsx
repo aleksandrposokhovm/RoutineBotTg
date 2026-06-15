@@ -3,9 +3,10 @@ import './index.css';
 import { SchedulePage } from './pages/SchedulePage';
 import { PlanPage } from './pages/PlanPage';
 import { DietPage } from './pages/DietPage';
+import { FinancePage } from './pages/FinancePage';
 import { profileApi, type UserProfile } from './api';
 
-type TabId = 'schedule' | 'plan' | 'diet';
+type TabId = 'schedule' | 'plan' | 'diet' | 'finance';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('schedule');
@@ -136,6 +137,7 @@ function App() {
             onProfileUpdated={refreshUser}
           />
         )}
+        {activeTab === 'finance' && <FinancePage />}
       </div>
 
       {/* Нижняя навигация */}
@@ -163,6 +165,14 @@ function App() {
         >
           <span className="nav-icon">🍽</span>
           <span className="nav-label">Рацион</span>
+        </button>
+        <button
+          id="nav-finance"
+          className={`nav-item ${activeTab === 'finance' ? 'active' : ''}`}
+          onClick={() => setActiveTab('finance')}
+        >
+          <span className="nav-icon">💰</span>
+          <span className="nav-label">Финансы</span>
         </button>
       </nav>
     </div>

@@ -1889,4 +1889,116 @@ body {
   margin-top: 4px;
 }
 
+/* Сетка категорий в виде плашек (2 колонки) */
+.categories-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* Прямоугольная плашка категории */
+.category-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.category-card:active {
+  transform: scale(0.97);
+  box-shadow: var(--shadow-none);
+}
+
+/* Иконка внутри плашки */
+.category-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.category-card:active .category-card-icon {
+  transform: scale(1.05);
+}
+
+/* Информационный блок плашки */
+.category-card-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.category-card-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.category-card-spent {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--color-accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Плашка добавления категории */
+.add-category-card {
+  border: 1px dashed var(--border-color-strong);
+  background: transparent;
+}
+
+.add-category-card:active {
+  background: var(--bg-secondary);
+}
+
+.add-icon-wrapper {
+  background: var(--bg-secondary);
+  border: 1.5px dashed var(--border-color-strong);
+  color: var(--text-muted);
+  font-size: 18px;
+  font-weight: bold;
+}
+
+/* Кнопка редактирования транзакции */
+.transaction-item-edit {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  transition: transform var(--transition-fast);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.transaction-item-edit:active {
+  transform: scale(0.85);
+}
+
+
 

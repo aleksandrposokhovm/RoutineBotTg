@@ -24,8 +24,9 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Модалка добавления расхода
-  const [isAddTxOpen, setIsAddTxOpen] = useState(false);
+  // Состояние модалки ввода/редактирования транзакции
+  const [isTxModalOpen, setIsTxModalOpen] = useState(false);
+  const [transactionToEdit, setTransactionToEdit] = useState<FinanceTransaction | null>(null);
 
   const loadStats = useCallback(async () => {
     try {
@@ -102,7 +103,7 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
     }
   };
 
-  // Создание транзакции расхода
+  // Создание / Редактирование транзакции расхода
   const handleSaveTransaction = async (data: {
     type: 'income' | 'expense';
     amount: number;
@@ -113,21 +114,31 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
       const accountsList = await financeApi.getAccounts();
       if (accountsList.length === 0) return;
 
-      await financeApi.createTransaction({
-        type: data.type,
-        amount: data.amount,
-        comment: data.comment,
-        date: data.date,
-        accountId: accountsList[0].id,
-        categoryId: category.id
-      });
+      if (transactionToEdit) {
+        // Редактируем существующий расход
+        await financeApi.updateTransaction(transactionToEdit.id, {
+          amount: data.amount,
+          comment: data.comment,
+          date: data.date
+        });
+      } else {
+        // Создаем новый расход
+        await financeApi.createTransaction({
+          type: data.type,
+          amount: data.amount,
+          comment: data.comment,
+          date: data.date,
+          accountId: accountsList[0].id,
+          categoryId: category.id
+        });
+      }
 
-      // Обновляем статистику
+      setTransactionToEdit(null);
       loadStats();
-      onTransactionDeleted(); // Оповещаем родителя для обновления
+      onTransactionDeleted(); // Обновляем родителя
     } catch (err) {
-      console.error('Error creating transaction:', err);
-      alert('Не удалось добавить расход');
+      console.error('Error saving transaction:', err);
+      alert('Не удалось сохранить расход');
     }
   };
 
@@ -327,7 +338,10 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
                   background: 'var(--color-graphite)', 
                   color: 'white' 
                 }}
-                onClick={() => setIsAddTxOpen(true)}
+                onClick={() => {
+                  setTransactionToEdit(null);
+                  setIsTxModalOpen(true);
+                }}
               >
                 ➕ Добавить расход
               </button>
@@ -359,10 +373,24 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
                           </div>
                         </div>
 
-                        <div className="transaction-item-right">
+                        <div className="transaction-item-right" style={{ gap: '4px' }}>
                           <span className="transaction-item-amount expense">
                             -{tx.amount} ₽
                           </span>
+                          
+                          {/* Кнопка редактирования */}
+                          <button 
+                            className="transaction-item-edit"
+                            onClick={() => {
+                              setTransactionToEdit(tx);
+                              setIsTxModalOpen(true);
+                            }}
+                            title="Редактировать транзакцию"
+                          >
+                            ✏️
+                          </button>
+
+                          {/* Кнопка удаления */}
                           <button 
                             className="transaction-item-delete"
                             onClick={() => handleDeleteTransaction(tx.id)}
@@ -383,11 +411,15 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
 
       {/* Модалка транзакции расхода */}
       <TransactionModal
-        isOpen={isAddTxOpen}
-        onClose={() => setIsAddTxOpen(false)}
+        isOpen={isTxModalOpen}
+        onClose={() => {
+          setIsTxModalOpen(false);
+          setTransactionToEdit(null);
+        }}
         onSave={handleSaveTransaction}
         type="expense"
         category={category}
+        transactionToEdit={transactionToEdit}
       />
     </div>
   );

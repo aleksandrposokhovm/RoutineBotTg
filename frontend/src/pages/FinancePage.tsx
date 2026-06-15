@@ -326,37 +326,47 @@ export function FinancePage() {
               {categories.map((cat) => (
                 <div 
                   key={cat.id}
-                  className="category-circle-wrapper"
+                  className="category-card"
                   data-category-id={cat.id}
+                  style={{ 
+                    borderColor: `${cat.color}40`,
+                    background: `linear-gradient(135deg, var(--bg-card) 0%, ${cat.color}08 100%)`
+                  }}
                   onClick={() => {
                     setSelectedCategoryDetail(cat);
                     triggerHaptic('light');
                   }}
                 >
                   <div 
-                    className="category-circle"
-                    style={{ backgroundColor: `${cat.color}40`, borderColor: cat.color }}
+                    className="category-card-icon"
+                    style={{ backgroundColor: `${cat.color}20`, color: cat.color }}
                   >
                     <span className="category-circle-icon">{cat.icon}</span>
-                    {cat.spentThisMonth > 0 && (
-                      <div className="category-badge">
-                        {Math.round(cat.spentThisMonth)} ₽
-                      </div>
-                    )}
                   </div>
-                  <span className="category-label">{cat.name}</span>
+                  <div className="category-card-info">
+                    <span className="category-card-name">{cat.name}</span>
+                    <span className="category-card-spent" style={{ color: cat.spentThisMonth > 0 ? 'var(--color-accent)' : 'var(--text-muted)' }}>
+                      {Math.round(cat.spentThisMonth).toLocaleString('ru-RU')} ₽
+                    </span>
+                  </div>
                 </div>
               ))}
 
               {/* Добавить категорию */}
-              <div className="category-circle-wrapper" onClick={() => {
-                setIsAddCategoryOpen(true);
-                triggerHaptic('light');
-              }}>
-                <button className="category-circle add-category-btn">
+              <div 
+                className="category-card add-category-card" 
+                onClick={() => {
+                  setIsAddCategoryOpen(true);
+                  triggerHaptic('light');
+                }}
+              >
+                <div className="category-card-icon add-icon-wrapper">
                   <span className="add-category-icon">+</span>
-                </button>
-                <span className="category-label">Категория</span>
+                </div>
+                <div className="category-card-info">
+                  <span className="category-card-name">Категория</span>
+                  <span className="category-card-spent" style={{ color: 'var(--text-muted)' }}>Добавить</span>
+                </div>
               </div>
             </div>
           </div>
@@ -366,12 +376,12 @@ export function FinancePage() {
         <>
           {/* Сводная карточка доходов */}
           <div className="income-balance-card" style={{ borderColor: 'rgba(90, 143, 90, 0.25)' }}>
-            <div className="balance-title">Текущий баланс кошелька</div>
+            <div className="balance-title">Текущий баланс кошелька (доходы за месяц)</div>
             <div className="balance-value" style={{ color: 'var(--color-success)' }}>
-              {account ? account.balance : 0} ₽
+              +{stats.income} ₽
             </div>
             <div className="balance-details">
-              Поступления за месяц: <strong>+{stats.income} ₽</strong>
+              Доходы за {getMonthLabel(currentMonth).toLowerCase()}: <strong>+{stats.income} ₽</strong>
             </div>
           </div>
 
@@ -428,10 +438,9 @@ export function FinancePage() {
                           
                           {/* Кнопка изменения */}
                           <button 
-                            className="transaction-item-delete"
+                            className="transaction-item-edit"
                             onClick={() => handleEditIncome(tx)}
                             title="Изменить доход"
-                            style={{ color: 'var(--text-secondary)' }}
                           >
                             ✏️
                           </button>
